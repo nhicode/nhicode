@@ -1,11 +1,927 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Tools - Its_Zenx</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clien Roblox iOS | chisato</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg-dark: #0d1117;
+            --bg-darker: #161b22;
+            --bg-card: #1c2128;
+            --neon-green: #00ff41;
+            --neon-blue: #00d9ff;
+            --neon-purple: #bd93f9;
+            --neon-pink: #ff79c6;
+            --neon-orange: #ffb86c;
+            --text-gray: #c9d1d9;
+            --text-dim: #8b949e;
+            --border-color: #30363d;
+            --glow-green: rgba(0, 255, 65, 0.3);
+            --glow-blue: rgba(0, 217, 255, 0.3);
+            --glow-purple: rgba(189, 147, 249, 0.3);
+        }
+
+        body {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            background: var(--bg-dark);
+            color: var(--text-gray);
+            min-height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        /* ANIMATED CODE BACKGROUND */
+        .code-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 1;
+            padding: 20px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--neon-green);
+            opacity: 0.4;
+            font-weight: 500;
+        }
+
+        .code-line-bg {
+            white-space: pre;
+            margin-bottom: 4px;
+            opacity: 0;
+            animation: fadeIn 0.5s forwards;
+            text-shadow: 0 0 5px rgba(0, 255, 65, 0.5);
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+
+        .code-line-bg.comment {
+            color: #6a9955;
+            text-shadow: 0 0 3px rgba(106, 153, 85, 0.3);
+        }
+
+        .code-line-bg.keyword {
+            color: var(--neon-purple);
+            text-shadow: 0 0 5px rgba(189, 147, 249, 0.5);
+        }
+
+        .code-line-bg.string {
+            color: #ffb86c;
+            text-shadow: 0 0 5px rgba(255, 184, 108, 0.4);
+        }
+
+        .code-line-bg.function {
+            color: var(--neon-blue);
+            text-shadow: 0 0 5px rgba(0, 217, 255, 0.5);
+        }
+
+        /* CONTAINER */
+        .container {
+            width: 100%;
+            max-width: 500px;
+            padding: 30px;
+            text-align: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            position: relative;
+            z-index: 100;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 1s ease;
+        }
+
+        .loaded .container {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* GLOWING BORDER EFFECT */
+        .container::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, var(--neon-green), var(--neon-blue), var(--neon-purple), var(--neon-pink));
+            border-radius: 12px;
+            opacity: 0;
+            z-index: -1;
+            transition: opacity 0.3s;
+        }
+
+        .container:hover::before {
+            opacity: 0.3;
+            animation: borderGlow 3s linear infinite;
+        }
+
+        @keyframes borderGlow {
+            0%, 100% { filter: hue-rotate(0deg); }
+            50% { filter: hue-rotate(180deg); }
+        }
+
+        /* HEADER ICON */
+        .header-icon {
+            width: 100px;
+            height: 100px;
+            border-radius: 20px;
+            object-fit: cover;
+            border: 3px solid var(--neon-blue);
+            box-shadow: 0 0 30px var(--glow-blue);
+            animation: float 3s ease-in-out infinite;
+            margin: 0 auto 20px;
+            display: block;
+            background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple));
+            padding: 15px;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 15px auto 10px;
+            position: relative;
+            display: inline-block;
+        }
+
+        h1::after {
+            content: '_';
+            color: var(--neon-blue);
+            animation: blink 1s infinite;
+            margin-left: 5px;
+        }
+
+        @keyframes blink {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0; }
+        }
+
+        /* SUBTITLE */
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
+
+        .subtitle::before {
+            content: '// ';
+            color: var(--neon-blue);
+        }
+
+        /* STATS CONTAINER */
+        .stats-container {
+            display: flex;
+            justify-content: space-around;
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-box {
+            background: var(--bg-darker);
+            padding: 15px 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            flex: 1;
+            transition: all 0.3s;
+        }
+
+        .stat-box:hover {
+            border-color: var(--neon-blue);
+            box-shadow: 0 0 20px var(--glow-blue);
+        }
+
+        .stat-box i {
+            font-size: 1.5rem;
+            margin-bottom: 8px;
+        }
+
+        .stat-box .stat-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin: 5px 0;
+        }
+
+        .stat-box .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .online-box i { color: #00ff41; }
+        .online-box .stat-value { color: var(--neon-green); }
+
+        .total-box i { color: var(--neon-blue); }
+        .total-box .stat-value { color: var(--neon-blue); }
+
+        /* STATUS BADGE */
+        .status-badge {
+            display: inline-block;
+            background: rgba(0, 255, 65, 0.1);
+            border: 1px solid var(--neon-green);
+            border-radius: 20px;
+            padding: 8px 16px;
+            margin: 15px 0;
+            font-size: 0.85rem;
+        }
+
+        .status-badge i {
+            color: var(--neon-green);
+            margin-right: 8px;
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        /* CODE SEPARATOR */
+        .code-separator {
+            margin: 25px 0;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            opacity: 0.6;
+        }
+
+        /* LINKS */
+        .links-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .link-card {
+            background: var(--bg-darker);
+            padding: 16px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            color: var(--text-gray);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            border: 1px solid var(--border-color);
+            transition: all 0.3s;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            font-size: 0.95rem;
+        }
+
+        .link-card::before {
+            content: '$ ';
+            color: var(--neon-green);
+            font-weight: 700;
+            margin-right: 8px;
+        }
+
+        .link-card::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: 3px;
+            background: var(--neon-blue);
+            transform: scaleY(0);
+            transition: transform 0.3s;
+        }
+
+        .link-card:hover {
+            transform: translateX(5px);
+            border-color: var(--neon-blue);
+            background: var(--bg-dark);
+            box-shadow: 0 0 20px var(--glow-blue);
+        }
+
+        .link-card:hover::after {
+            transform: scaleY(1);
+        }
+
+        .link-card i {
+            font-size: 1.2rem;
+            margin-right: 12px;
+            transition: transform 0.3s;
+            width: 24px;
+            text-align: center;
+        }
+
+        .link-card:hover i {
+            transform: scale(1.2);
+        }
+
+        /* Màu sắc cho từng loại link */
+        .link-card.ios i { color: var(--neon-blue); }
+        .link-card.android i { color: #3ddc84; }
+        .link-card.windows i { color: #00a4ef; }
+        .link-card.web i { color: var(--neon-orange); }
+        
+        .link-card.back i { color: var(--neon-pink); }
+        .link-card.back::after { background: var(--neon-pink); }
+        .link-card.back:hover {
+            border-color: var(--neon-pink);
+            box-shadow: 0 0 20px rgba(255, 121, 198, 0.3);
+        }
+
+        /* LOADER */
+        #loader-wrapper {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg-dark);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999999;
+            transition: 0.8s;
+        }
+
+        .loader-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid var(--border-color);
+            border-top: 4px solid var(--neon-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
+        }
+
+        .loader-text {
+            color: var(--neon-blue);
+            margin-top: 20px;
+            font-size: 0.9rem;
+        }
+
+        .loader-text::after {
+            content: '';
+            animation: dots 1.5s infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        .loaded #loader-wrapper {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        /* SNOW/PARTICLES */
+        .snow-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        .snowflake {
+            position: absolute;
+            top: -10px;
+            color: var(--neon-blue);
+            user-select: none;
+            pointer-events: none;
+            animation: fall linear infinite;
+            opacity: 0.4;
+            font-size: 12px;
+        }
+
+        @keyframes fall {
+            to {
+                transform: translateY(105vh) translateX(20px) rotate(360deg);
+            }
+        }
+
+        /* CLICK RIPPLE EFFECT */
+        .click-ripple {
+            position: fixed;
+            border-radius: 50%;
+            border: 2px solid var(--neon-blue);
+            pointer-events: none;
+            animation: ripple-expand 0.6s ease-out;
+            z-index: 9999;
+            width: 0;
+            height: 0;
+        }
+
+        @keyframes ripple-expand {
+            0% {
+                width: 0;
+                height: 0;
+                opacity: 1;
+                transform: translate(-50%, -50%);
+            }
+            100% {
+                width: 100px;
+                height: 100px;
+                opacity: 0;
+                transform: translate(-50%, -50%);
+            }
+        }
+
+        .click-particle {
+            position: fixed;
+            width: 4px;
+            height: 4px;
+            background: var(--neon-blue);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            box-shadow: 0 0 8px var(--neon-blue);
+        }
+
+        /* RESPONSIVE */
+        @media (max-width: 768px) {
+            .container {
+                max-width: 95%;
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 1.5rem;
+            }
+
+            .link-card {
+                font-size: 0.85rem;
+                padding: 14px 16px;
+            }
+            
+            .stats-container {
+                flex-direction: column;
+            }
+        }
+    </style>
 </head>
-<body style="background:#0d1117; color:#c9d1d9; font-family:monospace; padding:50px; text-align:center;">
-    <h1 style="color:#00ff41;">> Tools đang phát triển...</h1>
-    <p>Quay lại <a href="index.html" style="color:#00d9ff;">Trang chính</a></p>
+<body>
+    <!-- LOADER -->
+    <div id="loader-wrapper">
+        <div class="loader-spinner"></div>
+        <p class="loader-text">Đang tải dữ liệu</p>
+    </div>
+
+    <!-- ANIMATED CODE BACKGROUND -->
+    <div class="code-background" id="codeBackground"></div>
+
+    <!-- SNOW/PARTICLES -->
+    <div class="snow-container" id="snowContainer"></div>
+
+    <!-- MAIN CONTAINER -->
+    <div class="container">
+        <div class="profile">
+            <img src="https://raw.githubusercontent.com/nhicode/nhicode/refs/heads/main/0A9C3596-EAD0-46A5-9C28-CCA4D7CB61CC.jpeg" class="header-icon" alt="Clien iOS">
+            <h1>Clien Roblox iOS</h1>
+            <div class="subtitle"># iOS Client for Roblox</div>
+            
+            <!-- STATS: ONLINE + TOTAL -->
+            <div class="stats-container">
+                <div class="stat-box online-box">
+                    <i class="fa-solid fa-circle pulse"></i>
+                    <div class="stat-value" id="online-count">0</div>
+                    <div class="stat-label">Đang online</div>
+                </div>
+                <div class="stat-box total-box">
+                    <i class="fa-solid fa-users"></i>
+                    <div class="stat-value" id="total-count">0</div>
+                    <div class="stat-label">Tổng truy cập</div>
+                </div>
+            </div>
+            
+            <!-- STATUS BADGE -->
+            <div class="status-badge">
+                <i class="fa-brands fa-apple"></i>
+                <span>Phiên bản: 2.1.4 | iOS 15+</span>
+            </div>
+
+            <div class="code-separator">/* Công cụ & Tải xuống */</div>
+        </div>
+
+        <div class="links-wrapper">
+            <!-- 4 NÚT MỚI -->
+            <a href="#" onclick="showMessage(event, 'ios')" class="link-card ios">
+                <i class="fa-brands fa-apple"></i> Tải cho iOS (IPA)
+            </a>
+
+            <a href="#" onclick="showMessage(event, 'android')" class="link-card android">
+                <i class="fa-brands fa-android"></i> Tải cho Android (APK)
+            </a>
+
+            <a href="#" onclick="showMessage(event, 'windows')" class="link-card windows">
+                <i class="fa-brands fa-windows"></i> Tải cho Windows (EXE)
+            </a>
+
+            <a href="#" onclick="showMessage(event, 'web')" class="link-card web">
+                <i class="fa-solid fa-globe"></i> Chơi trên Web
+            </a>
+
+            <div class="code-separator"></div>
+
+            <!-- NÚT QUAY LẠI -->
+            <a href="index.html" class="link-card back">
+                <i class="fa-solid fa-arrow-left"></i> Quay lại Trang chính
+            </a>
+        </div>
+
+        <div class="code-separator" style="margin-top: 25px;"></div>
+    </div>
+
+    <script>
+        // API URLs
+        const TOTAL_API_URL = 'https://api.counterapi.dev/v1/loc_zzz_click_stats/main';
+        const TOTAL_API_INCREMENT = TOTAL_API_URL + '/increment';
+        const ONLINE_API_URL = 'https://api.counterapi.dev/v1/loc_zzz_click_stats/online';
+        const ONLINE_API_UP = ONLINE_API_URL + '/up';
+        const ONLINE_API_DOWN = ONLINE_API_URL + '/down';
+
+        // QUẢN LÝ SESSION ONLINE
+        let sessionId = localStorage.getItem('sessionId');
+        if (!sessionId) {
+            sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('sessionId', sessionId);
+        }
+
+        let isActive = true;
+        let heartbeatInterval;
+        let onlineCount = 0;
+
+        // LOAD TOTAL VIEWS
+        async function loadTotalClicks() {
+            try {
+                const response = await fetch(TOTAL_API_URL);
+                const data = await response.json();
+                if (data.count) {
+                    document.getElementById('total-count').innerText = data.count.toLocaleString();
+                }
+            } catch (e) {
+                console.error('Failed to load total views:', e);
+                document.getElementById('total-count').innerText = '---';
+            }
+        }
+
+        // LOAD ONLINE COUNT
+        async function loadOnlineCount() {
+            try {
+                const response = await fetch(ONLINE_API_URL);
+                const data = await response.json();
+                if (data.count !== undefined) {
+                    onlineCount = data.count;
+                    document.getElementById('online-count').innerText = onlineCount;
+                }
+            } catch (e) {
+                console.error('Failed to load online count:', e);
+                document.getElementById('online-count').innerText = '0';
+            }
+        }
+
+        // INCREMENT TOTAL VIEW (chỉ 1 lần khi load trang)
+        async function incrementTotalOnLoad() {
+            try {
+                console.log('Incrementing total views...');
+                await fetch(TOTAL_API_INCREMENT);
+                await loadTotalClicks();
+            } catch (e) {
+                console.error('Failed to increment total:', e);
+                await loadTotalClicks();
+            }
+        }
+
+        // USER ONLINE - JOIN
+        async function userJoin() {
+            try {
+                console.log('User joining...');
+                await fetch(ONLINE_API_UP);
+                await loadOnlineCount();
+            } catch (e) {
+                console.error('Failed to join:', e);
+            }
+        }
+
+        // USER ONLINE - LEAVE
+        async function userLeave() {
+            if (isActive) {
+                try {
+                    console.log('User leaving...');
+                    await fetch(ONLINE_API_DOWN);
+                    isActive = false;
+                } catch (e) {
+                    console.error('Failed to leave:', e);
+                }
+            }
+        }
+
+        // HEARTBEAT - Gửi mỗi 30 giây để duy trì trạng thái online
+        function startHeartbeat() {
+            heartbeatInterval = setInterval(async () => {
+                if (isActive) {
+                    try {
+                        // Gửi tín hiệu "vẫn online" bằng cách gọi UP API
+                        await fetch(ONLINE_API_UP);
+                        await loadOnlineCount();
+                    } catch (e) {
+                        console.error('Heartbeat failed:', e);
+                    }
+                }
+            }, 30000); // 30 giây
+        }
+
+        // XỬ LÝ KHI RỜI TRANG
+        function handlePageLeave() {
+            userLeave();
+        }
+
+        // XỬ LÝ KHI QUAY LẠI TRANG
+        function handlePageReturn() {
+            if (!isActive) {
+                isActive = true;
+                userJoin();
+                startHeartbeat();
+            }
+        }
+
+        // TRACK CLICK
+        async function trackClick(event, url) {
+            try {
+                await fetch(TOTAL_API_INCREMENT);
+                await loadTotalClicks();
+            } catch (e) {
+                console.error('Click tracking failed:', e);
+            }
+        }
+
+        // HIỂN THỊ THÔNG BÁO (THAY CHO LINK THẬT)
+        function showMessage(event, platform) {
+            event.preventDefault();
+            
+            // Track click
+            trackClick(event);
+            
+            // Hiệu ứng click
+            playClickSound();
+            createRipple(event.clientX, event.clientY);
+            createParticles(event.clientX, event.clientY);
+            
+            // Thông báo
+            const messages = {
+                'ios': '📱 Đang phát triển bản iOS\nLiên hệ Discord để test Beta!',
+                'android': '🤖 Bản Android sắp ra mắt!\nTheo dõi Discord để nhận thông báo.',
+                'windows': '💻 Windows Client đang trong giai đoạn Closed Beta.',
+                'web': '🌐 Web Client: Sắp có bản cập nhật mới!'
+            };
+            
+            alert(messages[platform] || 'Đang phát triển!');
+        }
+
+        // AUTO PLAY ON LOAD
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                document.body.classList.add('loaded');
+                // Increment total và join online
+                incrementTotalOnLoad();
+                userJoin();
+                startHeartbeat();
+            }, 1000);
+        });
+
+        // XỬ LÝ VISIBILITY CHANGE
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Tab bị ẩn - vẫn giữ online, không leave
+                console.log('Tab hidden');
+            } else {
+                // Tab hiện trở lại
+                console.log('Tab visible');
+                loadOnlineCount();
+                loadTotalClicks();
+            }
+        });
+
+        // XỬ LÝ BEFOREUNLOAD
+        window.addEventListener('beforeunload', () => {
+            userLeave();
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+            }
+        });
+
+        // PARTICLES BACKGROUND
+        setInterval(() => {
+            const p = document.createElement('div');
+            p.className = 'snowflake';
+            p.innerHTML = ['&lt;/&gt;', '{ }', '[ ]', '( )', '<< >>'][Math.floor(Math.random() * 5)];
+            p.style.left = Math.random() * 100 + 'vw';
+            p.style.animationDuration = Math.random() * 3 + 2 + 's';
+            document.getElementById('snowContainer').appendChild(p);
+            setTimeout(() => p.remove(), 5000);
+        }, 300);
+
+        // CLICK SOUND EFFECT
+        function playClickSound() {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.value = 600;
+                oscillator.type = 'sine';
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.1);
+            } catch(e) {}
+        }
+
+        // CLICK RIPPLE EFFECT
+        function createRipple(x, y) {
+            const ripple = document.createElement('div');
+            ripple.className = 'click-ripple';
+            ripple.style.left = x + 'px';
+            ripple.style.top = y + 'px';
+            ripple.style.transform = 'translate(-50%, -50%)';
+            document.body.appendChild(ripple);
+            setTimeout(() => ripple.remove(), 600);
+        }
+
+        // CLICK PARTICLES
+        function createParticles(x, y) {
+            const colors = ['var(--neon-green)', 'var(--neon-blue)', 'var(--neon-purple)', 'var(--neon-pink)'];
+            for (let i = 0; i < 8; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'click-particle';
+                particle.style.left = x + 'px';
+                particle.style.top = y + 'px';
+                particle.style.background = colors[Math.floor(Math.random() * colors.length)];
+                
+                const angle = (Math.PI * 2 * i) / 8;
+                const velocity = 50 + Math.random() * 50;
+                const tx = Math.cos(angle) * velocity;
+                const ty = Math.sin(angle) * velocity;
+                
+                document.body.appendChild(particle);
+                
+                setTimeout(() => {
+                    particle.style.transition = 'all 0.6s ease-out';
+                    particle.style.transform = `translate(${tx}px, ${ty}px)`;
+                    particle.style.opacity = '0';
+                }, 10);
+                
+                setTimeout(() => particle.remove(), 650);
+            }
+        }
+
+        // GLOBAL CLICK EFFECTS
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.link-card')) {
+                playClickSound();
+                createRipple(e.clientX, e.clientY);
+                createParticles(e.clientX, e.clientY);
+            }
+        });
+
+        // ANIMATED CODE BACKGROUND (SWIFT/IOS THEME)
+        const swiftCode = [
+            '// ClienRoblox.swift',
+            'import Foundation',
+            'import UIKit',
+            '',
+            'class RobloxClient: NSObject {',
+            '    var version: String',
+            '    var platform: String',
+            '    var isConnected: Bool',
+            '    ',
+            '    override init() {',
+            '        self.version = "2.1.4"',
+            '        self.platform = "iOS"',
+            '        self.isConnected = false',
+            '        super.init()',
+            '    }',
+            '    ',
+            '    func connectToServer() -> Bool {',
+            '        print("Connecting to Roblox...")',
+            '        // Initialize connection',
+            '        self.isConnected = true',
+            '        return self.isConnected',
+            '    }',
+            '    ',
+            '    func downloadAssets() {',
+            '        let url = URL(string: "https://api.roblox.com/assets")!',
+            '        URLSession.shared.dataTask(with: url) { data, response, error in',
+            '            if let data = data {',
+            '                print("Assets downloaded: \\(data.count) bytes")',
+            '            }',
+            '        }.resume()',
+            '    }',
+            '}',
+            '',
+            '// Initialize client',
+            'let client = RobloxClient()',
+            'if client.connectToServer() {',
+            '    print("Connected successfully!")',
+            '    client.downloadAssets()',
+            '}',
+            '',
+            '// iOS Client Ready',
+            '// Build: 214 | iOS 15+',
+            ''
+        ];
+
+        let currentLine = 0;
+        let currentChar = 0;
+        let typingSpeed = 50;
+        const codeBg = document.getElementById('codeBackground');
+
+        function typeCode() {
+            if (currentLine >= swiftCode.length) {
+                setTimeout(() => {
+                    codeBg.innerHTML = '';
+                    currentLine = 0;
+                    currentChar = 0;
+                    typeCode();
+                }, 3000);
+                return;
+            }
+
+            const line = swiftCode[currentLine];
+            
+            if (currentChar === 0) {
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'code-line-bg';
+                lineDiv.id = `line-${currentLine}`;
+                
+                if (line.startsWith('//')) {
+                    lineDiv.classList.add('comment');
+                } else if (line.includes('class ') || line.includes('func ') || line.includes('import ') || line.includes('var ') || line.includes('let ')) {
+                    lineDiv.classList.add('keyword');
+                } else if (line.includes('"') || line.includes("'")) {
+                    lineDiv.classList.add('string');
+                } else if (line.includes('print(')) {
+                    lineDiv.classList.add('function');
+                }
+                
+                codeBg.appendChild(lineDiv);
+            }
+
+            const lineDiv = document.getElementById(`line-${currentLine}`);
+            
+            if (currentChar < line.length) {
+                lineDiv.textContent = line.substring(0, currentChar + 1);
+                currentChar++;
+                setTimeout(typeCode, typingSpeed);
+            } else {
+                currentLine++;
+                currentChar = 0;
+                setTimeout(typeCode, 100);
+            }
+
+            codeBg.scrollTop = codeBg.scrollHeight;
+        }
+
+        setTimeout(() => {
+            typeCode();
+        }, 1500);
+    </script>
 </body>
 </html>
