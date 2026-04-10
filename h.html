@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>user = "Its_Zenx" - Profile</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg-dark: #0d1117;
+            --bg-darker: #161b22;
+            --bg-card: #1c2128;
+            --neon-green: #00ff41;
+            --neon-blue: #00d9ff;
+            --neon-purple: #bd93f9;
+            --neon-pink: #ff79c6;
+            --text-gray: #c9d1d9;
+            --text-dim: #8b949e;
+            --border-color: #30363d;
+            --glow-green: rgba(0, 255, 65, 0.3);
+            --glow-blue: rgba(0, 217, 255, 0.3);
+        }
+
+        body {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            background: var(--bg-dark);
+            color: var(--text-gray);
+            min-height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        /* ANIMATED CODE BACKGROUND */
+        .code-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 1;
+            padding: 20px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--neon-green);
+            opacity: 0.4;
+            font-weight: 500;
+        }
+
+        .code-line-bg {
+            white-space: pre;
+            margin-bottom: 4px;
+            opacity: 0;
+            animation: fadeIn 0.5s forwards;
+            text-shadow: 0 0 5px rgba(0, 255, 65, 0.5);
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+
+        .code-line-bg.comment {
+            color: #6a9955;
+            text-shadow: 0 0 3px rgba(106, 153, 85, 0.3);
+        }
+
+        .code-line-bg.keyword {
+            color: var(--neon-purple);
+            text-shadow: 0 0 5px rgba(189, 147, 249, 0.5);
+        }
+
+        .code-line-bg.string {
+            color: #ffb86c;
+            text-shadow: 0 0 5px rgba(255, 184, 108, 0.4);
+        }
+
+        .code-line-bg.function {
+            color: var(--neon-blue);
+            text-shadow: 0 0 5px rgba(0, 217, 255, 0.5);
+        }
+
+        .typing-cursor-bg {
+            display: inline-block;
+            width: 8px;
+            height: 16px;
+            background: var(--neon-green);
+            animation: blink 1s infinite;
+            margin-left: 2px;
+            box-shadow: 0 0 8px var(--neon-green);
+        }
+
+        @keyframes blink {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0; }
+        }
+
+        /* CONTAINER */
+        .container {
+            width: 100%;
+            max-width: 450px;
+            padding: 30px;
+            text-align: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            position: relative;
+            z-index: 100;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 1s ease;
+        }
+
+        .loaded .container {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* GLOWING BORDER EFFECT */
+        .container::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, var(--neon-green), var(--neon-blue), var(--neon-purple), var(--neon-pink));
+            border-radius: 12px;
+            opacity: 0;
+            z-index: -1;
+            transition: opacity 0.3s;
+        }
+
+        .container:hover::before {
+            opacity: 0.3;
+            animation: borderGlow 3s linear infinite;
+        }
+
+        @keyframes borderGlow {
+            0%, 100% { filter: hue-rotate(0deg); }
+            50% { filter: hue-rotate(180deg); }
+        }
+
+        /* PROFILE */
+        .profile-img {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid var(--neon-green);
+            box-shadow: 0 0 30px var(--glow-green);
+            animation: float 3s ease-in-out infinite;
+            margin: 0 auto 20px;
+            display: block;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--neon-green), var(--neon-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 15px auto 10px;
+            position: relative;
+            display: inline-block;
+        }
+
+        h1::after {
+            content: '_';
+            color: var(--neon-green);
+            animation: blink 1s infinite;
+            margin-left: 5px;
+        }
+
+        @keyframes blink {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0; }
+        }
+
+        /* ROLE/STATUS */
+        .role {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
+
+        .role::before {
+            content: '// ';
+            color: var(--neon-blue);
+        }
+
+        .profile {
+            position: relative;
+            z-index: 10;
+        }
+
+        /* VIEW COUNTER */
+        .view-stat {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-darker);
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin: 15px auto;
+            font-size: 0.9rem;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            position: relative;
+            z-index: 10;
+        }
+
+        .view-stat i {
+            color: var(--neon-blue);
+        }
+
+        .view-stat b {
+            color: var(--neon-green);
+            font-weight: 700;
+        }
+
+        /* CODE SEPARATOR */
+        .code-separator {
+            margin: 25px 0;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            opacity: 0.6;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* LINKS */
+        .links-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 20px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .link-card {
+            background: var(--bg-darker);
+            padding: 16px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            color: var(--text-gray);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            border: 1px solid var(--border-color);
+            transition: all 0.3s;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            font-size: 0.95rem;
+        }
+
+        .link-card::before {
+            content: '$ ';
+            color: var(--neon-green);
+            font-weight: 700;
+            margin-right: 8px;
+        }
+
+        .link-card::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: 3px;
+            background: var(--neon-green);
+            transform: scaleY(0);
+            transition: transform 0.3s;
+        }
+
+        .link-card:hover {
+            transform: translateX(5px);
+            border-color: var(--neon-green);
+            background: var(--bg-dark);
+            box-shadow: 0 0 20px var(--glow-green);
+        }
+
+        .link-card:hover::after {
+            transform: scaleY(1);
+        }
+
+        .link-card i {
+            font-size: 1.2rem;
+            margin-right: 12px;
+            transition: transform 0.3s;
+        }
+
+        .link-card:hover i {
+            transform: scale(1.2);
+        }
+
+        .link-card.facebook i { color: #1877F2; }
+        .link-card.zalo i { color: #0068ff; }
+        .link-card.tools i { color: var(--neon-purple); }
+        .link-card.donate {
+            background: linear-gradient(135deg, var(--bg-darker), rgba(255, 121, 198, 0.1));
+            border-color: var(--neon-pink);
+            color: var(--text-gray) !important;
+        }
+        .link-card.donate i { 
+            color: var(--neon-pink) !important; 
+        }
+        .link-card.donate:hover {
+            border-color: var(--neon-pink);
+            box-shadow: 0 0 20px rgba(255, 121, 198, 0.3);
+            color: var(--text-gray) !important;
+        }
+
+        /* MUSIC CONTROL */
+        .music-control {
+            position: fixed;
+            bottom: 30px;
+            left: 30px;
+            z-index: 1000;
+        }
+
+        .music-btn {
+            width: 50px;
+            height: 50px;
+            background: var(--bg-card);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--neon-green);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            border: 2px solid var(--border-color);
+            transition: all 0.3s;
+        }
+
+        .music-btn:hover {
+            border-color: var(--neon-green);
+            box-shadow: 0 0 25px var(--glow-green);
+            transform: scale(1.1);
+        }
+
+        .music-btn.playing {
+            animation: rotate 4s linear infinite;
+            border-color: var(--neon-green);
+        }
+
+        @keyframes rotate {
+            100% { transform: rotate(360deg); }
+        }
+
+        /* LOADER */
+        #loader-wrapper {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg-dark);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999999;
+            transition: 0.8s;
+        }
+
+        .loader-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid var(--border-color);
+            border-top: 4px solid var(--neon-green);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
+        }
+
+        .loader-text {
+            color: var(--neon-green);
+            margin-top: 20px;
+            font-size: 0.9rem;
+        }
+
+        .loader-text::after {
+            content: '';
+            animation: dots 1.5s infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        .loaded #loader-wrapper {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        /* SNOW/PARTICLES */
+        .snow-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        .snowflake {
+            position: absolute;
+            top: -10px;
+            color: var(--neon-green);
+            user-select: none;
+            pointer-events: none;
+            animation: fall linear infinite;
+            opacity: 0.4;
+            font-size: 12px;
+        }
+
+        @keyframes fall {
+            to {
+                transform: translateY(105vh) translateX(20px) rotate(360deg);
+            }
+        }
+
+        /* CLICK RIPPLE EFFECT */
+        .click-ripple {
+            position: fixed;
+            border-radius: 50%;
+            border: 2px solid var(--neon-green);
+            pointer-events: none;
+            animation: ripple-expand 0.6s ease-out;
+            z-index: 9999;
+            width: 0;
+            height: 0;
+        }
+
+        @keyframes ripple-expand {
+            0% {
+                width: 0;
+                height: 0;
+                opacity: 1;
+                transform: translate(-50%, -50%);
+            }
+            100% {
+                width: 100px;
+                height: 100px;
+                opacity: 0;
+                transform: translate(-50%, -50%);
+            }
+        }
+
+        .click-particle {
+            position: fixed;
+            width: 4px;
+            height: 4px;
+            background: var(--neon-green);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            box-shadow: 0 0 8px var(--neon-green);
+        }
+
+        /* RESPONSIVE */
+        @media (max-width: 768px) {
+            .container {
+                max-width: 95%;
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 1.5rem;
+            }
+
+            .link-card {
+                font-size: 0.85rem;
+                padding: 14px 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- LOADER -->
+    <div id="loader-wrapper">
+        <div class="loader-spinner"></div>
+        <p class="loader-text">Đang tải dữ liệu</p>
+    </div>
+
+    <!-- ANIMATED CODE BACKGROUND -->
+    <div class="code-background" id="codeBackground"></div>
+
+    <!-- SNOW/PARTICLES -->
+    <div class="snow-container" id="snowContainer"></div>
+
+    <!-- MUSIC CONTROL -->
+    <audio id="bgMusic" loop preload="auto"><source src="1.mp3" type="audio/mpeg"></audio>
+    <div class="music-control">
+        <div class="music-btn" id="musicBtn" onclick="toggleMusic()">
+            <i class="fa-solid fa-music" id="musicIcon"></i>
+        </div>
+    </div>
+
+    <!-- MAIN CONTAINER -->
+    <div class="container">
+        <div class="profile">
+            <img src="https://sf-static.upanhlaylink.com/img/image_2026030609d70d3425994ae4a429c9486f96a43e.jpg" class="profile-img" alt="Profile">
+            <h1>user = "Its_Zenx"</h1>
+            <div class="role"># Developer: Its_Zenx</div>
+            
+            <div class="view-stat">
+                <i class="fa-solid fa-eye"></i>
+                <span>Tổng mắt xem: <b id="click-count">0</b></span>
+            </div>
+
+            <div class="code-separator">// === Social Links === //</div>
+        </div>
+
+        <div class="links-wrapper">
+            <a href="https://www.facebook.com/PhamloczZz/" target="_blank" onclick="trackClick(event, this.href)" class="link-card facebook">
+                <i class="fab fa-facebook"></i> open("facebook")
+            </a>
+
+            <a href="https://zalo.me/0708770813" target="_blank" onclick="trackClick(event, this.href)" class="link-card zalo">
+                <i class="fa-solid fa-comment-dots"></i> open("zalo")
+            </a>
+
+            <a href="app.html" onclick="trackClick(event, this.href)" class="link-card tools">
+                <i class="fa-solid fa-download"></i> open("tools / app")
+            </a>
+
+            <a href="donate.html" onclick="trackClick(event, this.href)" class="link-card donate">
+                <i class="fa-solid fa-heart"></i> donate()
+            </a>
+        </div>
+
+        <div class="code-separator" style="margin-top: 25px;">// === End of Profile === //</div>
+    </div>
+
+    <script>
+        const API_URL = 'https://api.counterapi.dev/v1/loc_zzz_click_stats/main';
+        const API_INCREMENT = API_URL + '/increment';
+
+        // LOAD VIEW COUNT
+        async function loadClicks() {
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+                if (data.count) {
+                    document.getElementById('click-count').innerText = data.count.toLocaleString();
+                }
+            } catch (e) {
+                console.error('Failed to load view count:', e);
+            }
+        }
+
+        // AUTO INCREMENT VIEW ON PAGE LOAD
+        async function incrementViewOnLoad() {
+            try {
+                console.log('Incrementing view count...');
+                const response = await fetch(API_INCREMENT);
+                console.log('Increment response:', response.status);
+                // Load updated count after incrementing
+                await loadClicks();
+            } catch (e) {
+                console.error('Failed to increment view:', e);
+                // Still try to load count even if increment fails
+                await loadClicks();
+            }
+        }
+
+        // TRACK CLICK
+        async function trackClick(event, url) {
+            try {
+                await fetch(API_INCREMENT);
+            } catch (e) {}
+            
+            if (!url.includes('facebook.com') && !url.includes('zalo.me')) {
+                event.preventDefault();
+                setTimeout(() => {
+                    window.location.href = url;
+                }, 300);
+            }
+        }
+
+        // MUSIC PLAYER
+        const music = document.getElementById("bgMusic");
+        const mBtn = document.getElementById("musicBtn");
+        const mIcon = document.getElementById("musicIcon");
+
+        function autoPlay() {
+            music.play().then(() => {
+                mBtn.classList.add("playing");
+                mIcon.classList.replace("fa-music", "fa-pause");
+            }).catch(() => {
+                // If autoplay is blocked, try again on user interaction
+                document.addEventListener('click', autoPlay, { once: true });
+            });
+        }
+
+        // Auto play on page load
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                document.body.classList.add('loaded');
+                // Increment view count after page loads
+                incrementViewOnLoad();
+                // Auto play music
+                autoPlay();
+            }, 1000);
+        });
+
+        function toggleMusic() {
+            if (music.paused) {
+                music.play();
+                mBtn.classList.add("playing");
+                mIcon.classList.replace("fa-music", "fa-pause");
+            } else {
+                music.pause();
+                mBtn.classList.remove("playing");
+                mIcon.classList.replace("fa-pause", "fa-music");
+            }
+        }
+
+        // PARTICLES
+        setInterval(() => {
+            const p = document.createElement('div');
+            p.className = 'snowflake';
+            p.innerHTML = ['&lt;/&gt;', '{ }', '[ ]', '( )'][Math.floor(Math.random() * 4)];
+            p.style.left = Math.random() * 100 + 'vw';
+            p.style.animationDuration = Math.random() * 3 + 2 + 's';
+            document.getElementById('snowContainer').appendChild(p);
+            setTimeout(() => p.remove(), 5000);
+        }, 300);
+
+        // CLICK SOUND EFFECT
+        function playClickSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 800;
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.1);
+        }
+
+        // CLICK RIPPLE EFFECT
+        function createRipple(x, y) {
+            const ripple = document.createElement('div');
+            ripple.className = 'click-ripple';
+            ripple.style.left = x + 'px';
+            ripple.style.top = y + 'px';
+            ripple.style.transform = 'translate(-50%, -50%)';
+            document.body.appendChild(ripple);
+            setTimeout(() => ripple.remove(), 600);
+        }
+
+        // CLICK PARTICLES
+        function createParticles(x, y) {
+            const colors = ['var(--neon-green)', 'var(--neon-blue)', 'var(--neon-purple)'];
+            for (let i = 0; i < 8; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'click-particle';
+                particle.style.left = x + 'px';
+                particle.style.top = y + 'px';
+                particle.style.background = colors[Math.floor(Math.random() * colors.length)];
+                
+                const angle = (Math.PI * 2 * i) / 8;
+                const velocity = 50 + Math.random() * 50;
+                const tx = Math.cos(angle) * velocity;
+                const ty = Math.sin(angle) * velocity;
+                
+                document.body.appendChild(particle);
+                
+                setTimeout(() => {
+                    particle.style.transition = 'all 0.6s ease-out';
+                    particle.style.transform = `translate(${tx}px, ${ty}px)`;
+                    particle.style.opacity = '0';
+                }, 10);
+                
+                setTimeout(() => particle.remove(), 650);
+            }
+        }
+
+        // CLICK HEARTS
+        document.addEventListener('click', function(e) {
+            // Play click sound
+            playClickSound();
+            
+            // Create ripple effect
+            createRipple(e.clientX, e.clientY);
+            
+            // Create particles
+            createParticles(e.clientX, e.clientY);
+            
+            // Create heart
+            const h = document.createElement('div');
+            h.innerHTML = '&lt;3';
+            h.style.position = 'fixed';
+            h.style.left = e.clientX + 'px';
+            h.style.top = e.clientY + 'px';
+            h.style.color = 'var(--neon-green)';
+            h.style.fontSize = '20px';
+            h.style.fontWeight = 'bold';
+            h.style.transition = '1s';
+            h.style.pointerEvents = 'none';
+            h.style.zIndex = '9999';
+            document.body.appendChild(h);
+            setTimeout(() => {
+                h.style.transform = 'translateY(-100px)';
+                h.style.opacity = '0';
+            }, 50);
+            setTimeout(() => h.remove(), 1000);
+        });
+
+        // ANIMATED PYTHON CODE BACKGROUND
+        const pythonCode = [
+            '# profile.py',
+            'import requests',
+            'from datetime import datetime',
+            '',
+            'def load_profile():',
+            '    name = "Lộc (zZz)"',
+            '    role = "Developer & Hacker"',
+            '    views = get_views()',
+            '    return {"name": name, "role": role, "views": views}',
+            '',
+            'def connect_api():',
+            '    url = "https://api.counterapi.dev/v1/loc_zzz_click_stats/main"',
+            '    print("Connecting to API...")',
+            '    response = requests.get(url)',
+            '    return response.json()',
+            '',
+            'def get_views():',
+            '    data = connect_api()',
+            '    return data.get("count", 0)',
+            '',
+            'class Developer:',
+            '    def __init__(self, name):',
+            '        self.name = name',
+            '        self.skills = ["Python", "JavaScript", "Hacking"]',
+            '        self.status = "Online"',
+            '    ',
+            '    def code(self):',
+            '        print(f"{self.name} is coding...")',
+            '',
+            'if __name__ == "__main__":',
+            '    profile = load_profile()',
+            '    print(f"Welcome {profile[\'name\']}")',
+            '    print(f"Total views: {profile[\'views\']}")',
+            '    ',
+            '    dev = Developer("Lộc")',
+            '    dev.code()',
+            '',
+            '# Running profile system...',
+            '# All systems operational ✓'
+        ];
+
+        let currentLine = 0;
+        let currentChar = 0;
+        let typingSpeed = 50;
+        const codeBg = document.getElementById('codeBackground');
+
+        function typeCode() {
+            if (currentLine >= pythonCode.length) {
+                // Restart after a pause
+                setTimeout(() => {
+                    codeBg.innerHTML = '';
+                    currentLine = 0;
+                    currentChar = 0;
+                    typeCode();
+                }, 3000);
+                return;
+            }
+
+            const line = pythonCode[currentLine];
+            
+            if (currentChar === 0) {
+                // Create new line element
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'code-line-bg';
+                lineDiv.id = `line-${currentLine}`;
+                
+                // Add syntax highlighting classes
+                if (line.startsWith('#')) {
+                    lineDiv.classList.add('comment');
+                } else if (line.includes('def ') || line.includes('class ') || line.includes('import ') || line.includes('from ')) {
+                    lineDiv.classList.add('keyword');
+                } else if (line.includes('"') || line.includes("'")) {
+                    lineDiv.classList.add('string');
+                } else if (line.includes('print(') || line.includes('get_')) {
+                    lineDiv.classList.add('function');
+                }
+                
+                codeBg.appendChild(lineDiv);
+            }
+
+            const lineDiv = document.getElementById(`line-${currentLine}`);
+            
+            if (currentChar < line.length) {
+                lineDiv.textContent = line.substring(0, currentChar + 1);
+                currentChar++;
+                setTimeout(typeCode, typingSpeed);
+            } else {
+                // Move to next line
+                currentLine++;
+                currentChar = 0;
+                setTimeout(typeCode, 100);
+            }
+
+            // Auto scroll to bottom
+            codeBg.scrollTop = codeBg.scrollHeight;
+        }
+
+        // Start typing animation after page loads
+        setTimeout(() => {
+            typeCode();
+        }, 1500);
+    </script>
+</body>
+</html>
