@@ -39,6 +39,8 @@ local Config = {
 	TARGET_X = 716,
 	TARGET_Y = 385,
 	HOLD_TIME = 0.6,
+	FISH_BAR_NAMES = {}, -- thêm tên GUI thanh máu cá nếu script không tự nhận ra (vd { "FishHealth" }); cũng có thể đặt getgenv().ChisatoFishBar = "Tên"
+	CAST_GAP = 0.8, -- chưa có thanh máu cá: thả cần lại sau mỗi chừng này giây
 	SKILL_DELAY = 0.4,
 	SKILL_ENABLED = { Z = true, X = true, C = true, V = true }, -- kỹ năng nào được dùng khi Auto Farm (chỉnh ở tab Farm)
 	AUTO_QTE = true,
@@ -66,6 +68,8 @@ local Config = {
 	BOAT_TIMEOUT = 360, -- lái tối đa chừng này giây mỗi lượt (xe tự né vật cản, lạc đường thì lập lại lộ trình)
 	BOAT_RETRIES = 3, -- gọi xe / lên xe / lái hỏng giữa chừng: thử lại tối đa chừng này lượt
 	BOAT_TOTAL_TIMEOUT = 700, -- cả chuyến đi xe (gồm các lần thử lại) tối đa chừng này giây
+	BOSS_BOAT_FISH = true, -- Auto Câu Boss: lái xe tới gần boss rồi câu ngay trên xe (không lên đảo). false = lên đảo như cũ
+	BOSS_BOAT_RANGE = 55, -- dừng xe khi cách boss chừng này stud
 	SELL_WALK = true, -- bán cá bằng cách ĐI BỘ tới NPC bán cá gần nhất (không tp). false = tp tới SELL_POS như cũ
 	SELL_WALK_TIMEOUT = 90, -- đi bộ tới NPC / đi bộ về chỗ cũ: tối đa chừng này giây mỗi chặng
 	SELL_WALK_STOP = 6, -- dừng cách NPC chừng này stud rồi mới bấm tương tác
@@ -170,6 +174,14 @@ local antiTPStop
 -- ==================================================
 local Travel = { owner = nil, since = 0, lastEnd = 0, minGap = 1.5, maxHold = 1500 } -- maxHold: giữ khoá quá lâu (bị kẹt) thì coi như hết hạn
 
+-- Chạy 1 luồng nền: mọi lỗi bị nuốt tại chỗ (không in ra console, không làm lag vì spam lỗi)
+function Travel.spawn(fn, ...)
+	local n, args = select("#", ...), { ... }
+	return task.spawn(function()
+		pcall(fn, table.unpack(args, 1, n))
+	end)
+end
+
 function Travel.try(name)
 	if Travel.owner and os.clock() - Travel.since > Travel.maxHold then Travel.owner = nil end
 	if Travel.owner or os.clock() - Travel.lastEnd < Travel.minGap then return false end
@@ -202,7 +214,7 @@ end
 -- Trả về ok, lỗi.
 local function requestStream(pos, timeout)
 	local done, ok, err = false, false, nil
-	task.spawn(function()
+	Travel.spawn(function()
 		ok, err = pcall(function()
 			LocalPlayer:RequestStreamAroundAsync(pos, timeout)
 		end)
@@ -266,6 +278,9 @@ local function antiTPAttach(char)
 	AntiTP.reverts = {}
 
 	AntiTP.hb = RunService.Heartbeat:Connect(function()
+		pcall(AntiTP.step)
+	end)
+	AntiTP.step = function()
 		local now = os.clock()
 		local cf = root.CFrame
 		local last = AntiTP.lastCF
@@ -293,17 +308,17 @@ local function antiTPAttach(char)
 			end
 		end
 		AntiTP.lastCF = root.CFrame
-	end)
+	end
 
 	AntiTP.died = hum.Died:Connect(antiTPDisconnect)
 end
 
 table.insert(connections, LocalPlayer.CharacterAdded:Connect(function(char)
-	task.spawn(antiTPAttach, char)
+	Travel.spawn(antiTPAttach, char)
 end))
 table.insert(connections, LocalPlayer.CharacterRemoving:Connect(antiTPDisconnect))
 if LocalPlayer.Character then
-	task.spawn(antiTPAttach, LocalPlayer.Character)
+	Travel.spawn(antiTPAttach, LocalPlayer.Character)
 end
 
 -- Bật / tắt Anti TP lúc đang chạy (công tắc ở tab Setting)
@@ -311,7 +326,7 @@ function AntiTP.setEnabled(v)
 	Config.ANTI_TP = v and true or false
 	if Config.ANTI_TP then
 		local char = LocalPlayer.Character
-		if char then task.spawn(antiTPAttach, char) end
+		if char then Travel.spawn(antiTPAttach, char) end
 	else
 		antiTPDisconnect()
 	end
@@ -505,80 +520,512 @@ local function flatDist(a, b)
 	return math.sqrt((a.X - b.X) ^ 2 + (a.Z - b.Z) ^ 2)
 end
 
+-- Đi bộ có NÉ VẬT CẢN bằng tia (không cần navmesh): tường, cây, đá, nhà, cột... đều được né, kẹt thì lùi ra rồi chọn hướng khác.
+--  * Mỗi nhịp quét 18 hướng quanh hướng về đích, ở 2 tầng cao (chân ~ ngực/đầu), 3 tia theo bề ngang thân người.
+--    Vật thấp (nhảy qua được) -> nhảy; vật cao / tường -> chọn hướng thoáng gần hướng đích nhất.
+--  * Có "trí nhớ ô đã đi" để không quay vòng trong vịnh / hốc tường, nhớ phía đang bám, nhớ hướng vừa kẹt.
+--  * Tránh bờ vực / mép nước (tia chiếu xuống phía trước không thấy đất hoặc thấy nước thì coi là không đi được).
+-- Nav.steer(goal, {stop, maxTime, patience, done}) -> true nếu tới nơi, hoặc false + lý do.
+local function steerImpl(goal, opts)
+	opts = opts or {}
+	local stop = opts.stop or 4
+	local maxTime = opts.maxTime or 20
+	local patience = opts.patience or 25 -- quá chừng này giây mà không tiến triển (gần đích hơn / khám phá chỗ mới) thì bỏ cuộc
+	local nearOK = opts.nearOK -- đã gần đích tới mức này mà không nhích thêm được thì coi như tới nơi
+	local abs, sqrt, rad, cos, sin, floor, min, max = math.abs, math.sqrt, math.rad, math.cos, math.sin, math.floor, math.min, math.max
+	local atan2 = math.atan2 or math.atan
+	local t0 = os.clock()
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.IgnoreWater = true
+	params.RespectCanCollide = true
+	local gparams = RaycastParams.new() -- tia chiếu xuống kiểm tra mặt đất (thấy nước = không phải đất)
+	gparams.FilterType = Enum.RaycastFilterType.Exclude
+	gparams.IgnoreWater = false
+	gparams.RespectCanCollide = true
+	local lastFilter = -1e9
+	local function refreshFilter(now)
+		if now - lastFilter < 1.5 then return end
+		lastFilter = now
+		local list = {}
+		for _, pl in ipairs(Players:GetPlayers()) do
+			if pl.Character then list[#list + 1] = pl.Character end
+		end
+		local cars = workspace:FindFirstChild("Cars")
+		if cars then list[#list + 1] = cars end
+		params.FilterDescendantsInstances = list
+		gparams.FilterDescendantsInstances = list
+	end
+
+	local LEN = 12
+	local OFFS = { 0, -1.7, 1.7 }
+	local ANGS = { 0, 15, -15, 30, -30, 45, -45, 60, -60, 80, -80, 100, -100, 120, -120, 145, -145, 180 }
+
+	-- hi: khoảng thoáng ở tầm ngực/đầu (vật cao chặn đường); lo: khoảng tới vật thấp ở tầm chân (nhảy qua được)
+	local function probe(px, py, pz, dx, dz)
+		local rx, rz = -dz, dx
+		local hi, lo = LEN, LEN
+		local vec = Vector3.new(dx * LEN, 0, dz * LEN)
+		for _, o in ipairs(OFFS) do
+			local ox, oz = px + rx * o, pz + rz * o
+			local r2 = workspace:Raycast(Vector3.new(ox, py + 1.5, oz), vec, params)
+			if r2 and r2.Distance < hi then hi = r2.Distance end
+			local r1 = workspace:Raycast(Vector3.new(ox, py - 1.6, oz), vec, params)
+			if r1 and r1.Distance < lo then lo = r1.Distance end
+		end
+		return hi, lo
+	end
+
+	local function groundAt(x, y, z)
+		local r = workspace:Raycast(Vector3.new(x, y, z), Vector3.new(0, -30, 0), gparams)
+		if not r then return false end
+		if r.Material == Enum.Material.Water then
+			if opts and opts.water then return true end
+			return Travel.Water ~= nil and Travel.Water.on == true and Travel.Water.proven == true
+		end
+		if r.Position.Y < y - 14 then return false end
+		return true
+	end
+
+	-- ===== bản đồ vật cản tự dựng (ô 4 stud) + tìm đường A* =====
+	-- Mỗi 0.25 giây bắn 16 tia quanh người: chạm vật cản -> đánh dấu ô bị chắn; không có đất / có nước phía trước -> đánh dấu luôn.
+	-- Ô chưa biết coi là đi được; vừa phát hiện thêm vật cản thì tính lại đường => vòng qua tường dài, thoát khỏi hốc / vịnh.
+	local CS = 4
+	local occ = {}
+	local function ck(ix, iz) return (ix + 20000) * 40009 + (iz + 20000) end
+	local function mark(x, z)
+		-- sát đích (NPC, quầy hàng, bậc thềm) không đánh dấu: để luôn còn đường tiến vào đích
+		if (x - goal.X) ^ 2 + (z - goal.Z) ^ 2 < 100 then return end
+		occ[ck(floor(x / CS), floor(z / CS))] = true
+	end
+	local nSensed = 0
+	local function sense(px, py, pz)
+		for k = 0, 15 do
+			local th = k * (math.pi / 8)
+			local dx, dz = cos(th), sin(th)
+			local r = workspace:Raycast(Vector3.new(px, py + 1.5, pz), Vector3.new(dx * 18, 0, dz * 18), params)
+			if r then
+				mark(px + dx * (r.Distance + 0.8), pz + dz * (r.Distance + 0.8))
+				nSensed = nSensed + 1
+			end
+			if k % 2 == 0 and not groundAt(px + dx * 7, py, pz + dz * 7) then
+				mark(px + dx * 7, pz + dz * 7)
+				nSensed = nSensed + 1
+			end
+		end
+	end
+
+	local function astar(sx, sz, gx, gz)
+		local six, siz = floor(sx / CS), floor(sz / CS)
+		local gix, giz = floor(gx / CS), floor(gz / CS)
+		local lox, hix = min(six, gix) - 22, max(six, gix) + 22
+		local loz, hiz = min(siz, giz) - 22, max(siz, giz) + 22
+		local startK, goalK = ck(six, siz), ck(gix, giz)
+		local g, parent, closed = { [startK] = 0 }, {}, {}
+		local px, pz = { [startK] = six }, { [startK] = siz }
+		-- heap nhị phân (khoá, f)
+		local hk, hf, hn = {}, {}, 0
+		local function push(key, f)
+			hn = hn + 1
+			local i = hn
+			hk[i], hf[i] = key, f
+			while i > 1 do
+				local p = floor(i / 2)
+				if hf[p] <= hf[i] then break end
+				hk[p], hk[i], hf[p], hf[i] = hk[i], hk[p], hf[i], hf[p]
+				i = p
+			end
+		end
+		local function pop()
+			local key = hk[1]
+			hk[1], hf[1] = hk[hn], hf[hn]
+			hk[hn], hf[hn] = nil, nil
+			hn = hn - 1
+			local i = 1
+			while true do
+				local l, r, m = i * 2, i * 2 + 1, i
+				if l <= hn and hf[l] < hf[m] then m = l end
+				if r <= hn and hf[r] < hf[m] then m = r end
+				if m == i then break end
+				hk[m], hk[i], hf[m], hf[i] = hk[i], hk[m], hf[i], hf[m]
+				i = m
+			end
+			return key
+		end
+		local function h(ix, iz) return sqrt((ix - gix) ^ 2 + (iz - giz) ^ 2) end
+		local function blockedCell(ix, iz) return occ[ck(ix, iz)] == true end
+		push(startK, h(six, siz))
+		local best, bestH, expanded = startK, h(six, siz), 0
+		local DIRS = { { 1, 0, 1 }, { -1, 0, 1 }, { 0, 1, 1 }, { 0, -1, 1 }, { 1, 1, 1.414 }, { 1, -1, 1.414 }, { -1, 1, 1.414 }, { -1, -1, 1.414 } }
+		while hn > 0 and expanded < 7000 do
+			local cur = pop()
+			if not closed[cur] then
+				closed[cur] = true
+				expanded = expanded + 1
+				local cx, cz = px[cur], pz[cur]
+				if cur == goalK then best = cur break end
+				local hc = h(cx, cz)
+				if hc < bestH then best, bestH = cur, hc end
+				for _, d in ipairs(DIRS) do
+					local nx, nz = cx + d[1], cz + d[2]
+					if nx >= lox and nx <= hix and nz >= loz and nz <= hiz then
+						local nk = ck(nx, nz)
+						if not closed[nk] and (nk == goalK or not occ[nk]) then
+							local okMove = true
+							if d[1] ~= 0 and d[2] ~= 0 and (blockedCell(cx + d[1], cz) or blockedCell(cx, cz + d[2])) then okMove = false end
+							if okMove then
+								-- ô sát vật cản tốn thêm công (đi cách tường ~1 ô)
+								local extra = 0
+								if occ[ck(nx + 1, nz)] or occ[ck(nx - 1, nz)] or occ[ck(nx, nz + 1)] or occ[ck(nx, nz - 1)] then extra = 2.5 end
+								local ng = g[cur] + d[3] + extra
+								if not g[nk] or ng < g[nk] then
+									g[nk] = ng
+									parent[nk] = cur
+									px[nk], pz[nk] = nx, nz
+									push(nk, ng + h(nx, nz))
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+		-- dựng đường (toạ độ tâm ô) từ best về start
+		local rev, k = {}, best
+		while k do
+			rev[#rev + 1] = { (px[k] + 0.5) * CS, (pz[k] + 0.5) * CS }
+			k = parent[k]
+		end
+		local path = {}
+		for i = #rev, 1, -1 do path[#path + 1] = rev[i] end
+		return path, best == goalK
+	end
+
+	-- đoạn thẳng a->b không cắt ô vật cản nào đã biết
+	local function lineFree(ax, az, bx, bz)
+		local dx, dz = bx - ax, bz - az
+		local d = sqrt(dx * dx + dz * dz)
+		local n = max(1, floor(d / 2))
+		for i = 1, n do
+			local t = i / n
+			local x, z = ax + dx * t, az + dz * t
+			if occ[ck(floor(x / CS), floor(z / CS))] then return false end
+			-- cả hai bên thân (cách ~2 stud)
+			local ux, uz = -dz / d * 2, dx / d * 2
+			if occ[ck(floor((x + ux) / CS), floor((z + uz) / CS))] or occ[ck(floor((x - ux) / CS), floor((z - uz) / CS))] then return false end
+		end
+		return true
+	end
+
+	local visits, lastCell = {}, nil
+	local function cell(x, z) return floor(x / 6) .. ":" .. floor(z / 6) end
+	local blocked = {} -- hướng vừa kẹt { th, t }
+	local side, sideUntil = 0, 0
+	local samplePos, sampleT = nil, os.clock()
+	local stuckN = 0
+	local bestD, bestT = math.huge, os.clock()
+	local th, dirx, dirz = 0, 0, 0
+	local nextSense, nextPlan = 0, 0
+	local plan, planOk = nil, false
+	local nearBest, nearT = math.huge, os.clock()
+
+	-- kế hoạch cũ còn dùng được không: các ô sắp đi qua chưa bị đánh dấu là vật cản
+	local function planIndex(pl, x, z)
+		local bi, bd = 1, math.huge
+		for i = 1, #pl do
+			local d = (pl[i][1] - x) ^ 2 + (pl[i][2] - z) ^ 2
+			if d < bd then bi, bd = i, d end
+		end
+		return bi
+	end
+	local function planLeft(pl, from)
+		local len = 0
+		for i = from, #pl - 1 do
+			len = len + sqrt((pl[i + 1][1] - pl[i][1]) ^ 2 + (pl[i + 1][2] - pl[i][2]) ^ 2)
+		end
+		return len
+	end
+	local function planValid(pl, x, z)
+		local from = planIndex(pl, x, z)
+		for i = from, math.min(#pl, from + 20) do
+			if occ[ck(floor(pl[i][1] / CS), floor(pl[i][2] / CS))] and (pl[i][1] - goal.X) ^ 2 + (pl[i][2] - goal.Z) ^ 2 > 100 then return false end
+		end
+		return true
+	end
+
+	while os.clock() - t0 < maxTime do
+		local hum, root = navParts()
+		if not hum then return false, "mất nhân vật" end
+		local now = os.clock()
+		local pos = root.Position
+		local gx, gz = goal.X - pos.X, goal.Z - pos.Z
+		local dist = sqrt(gx * gx + gz * gz)
+		if dist <= stop and abs(pos.Y - goal.Y) < 15 then return true end
+		if opts.done and opts.done() then return true end
+		if hum.SeatPart then
+			hum.Jump = true
+			task.wait(0.15)
+		else
+			if dist < bestD - 4 then bestD, bestT = dist, now end
+			if dist < nearBest - 1.5 then nearBest, nearT = dist, now end
+			if nearOK and dist <= nearOK and now - nearT > 4 then return true end
+			if now - bestT > patience then return false, "không tiến thêm được" end
+			refreshFilter(now)
+
+			local cellK = cell(pos.X, pos.Z)
+			if cellK ~= lastCell then
+				if not visits[cellK] then bestT = now end -- đang khám phá chỗ mới cũng là có tiến triển
+				visits[cellK] = (visits[cellK] or 0) + 1
+				lastCell = cellK
+			end
+
+			-- cập nhật bản đồ + (tính lại) đường đi
+			if now >= nextSense then
+				nextSense = now + 0.25
+				sense(pos.X, pos.Y, pos.Z)
+			end
+			if dist < 14 then
+				plan = nil -- sát đích: nhắm thẳng
+			elseif nSensed > 0 and now >= nextPlan then
+				nextPlan = now + 1.0
+				-- đích trung gian tối đa 120 stud (đích xa hơn thì đi từng chặng)
+				local sgx, sgz = goal.X, goal.Z
+				if dist > 120 then sgx, sgz = pos.X + gx / dist * 120, pos.Z + gz / dist * 120 end
+				local okA, p, complete = pcall(astar, pos.X, pos.Z, sgx, sgz)
+				if okA and p and #p >= 2 then
+					-- chỉ đổi sang đường mới khi đường cũ không còn dùng được hoặc đường mới ngắn hơn rõ rệt (khỏi đi đi lại giữa 2 phương án)
+					if not plan or not planValid(plan, pos.X, pos.Z) or planLeft(p, 1) < 0.75 * planLeft(plan, planIndex(plan, pos.X, pos.Z)) then
+						plan, planOk = p, complete
+					end
+				elseif plan and not planValid(plan, pos.X, pos.Z) then
+					plan = nil
+				end
+			end
+
+			-- điểm ngắm: đi theo đường A* (kéo thẳng tới điểm xa nhất mà đoạn thẳng còn thoáng, tối đa ~40 stud), không có thì ngắm thẳng đích
+			local aimX, aimZ, aimIsGoal = goal.X, goal.Z, true
+			if plan then
+				local pick
+				for i = planIndex(plan, pos.X, pos.Z) + 1, #plan do
+					local q = plan[i]
+					local dd = sqrt((q[1] - pos.X) ^ 2 + (q[2] - pos.Z) ^ 2)
+					if dd > 45 then break end
+					if lineFree(pos.X, pos.Z, q[1], q[2]) then pick = q else
+						if not pick and dd > 6 then pick = q end
+						if dd > 10 then break end
+					end
+				end
+				if not pick then pick = plan[min(#plan, planIndex(plan, pos.X, pos.Z) + 2)] end
+				if pick then
+					local pdd = sqrt((pick[1] - pos.X) ^ 2 + (pick[2] - pos.Z) ^ 2)
+					if pdd > 3 then
+						aimX, aimZ, aimIsGoal = pick[1], pick[2], false
+					end
+				end
+			end
+			local agx, agz = aimX - pos.X, aimZ - pos.Z
+			local adist = sqrt(agx * agx + agz * agz)
+
+			local bearing = atan2(agz, agx)
+			local need = math.clamp(adist - 1.5, 3, 8)
+			local chosenA, chosenHi, chosenLo = nil, 0, LEN
+
+			-- đường tới điểm ngắm thoáng thì đi luôn (không quét hết 18 hướng)
+			do
+				local dx, dz = cos(bearing), sin(bearing)
+				local hi, lo = probe(pos.X, pos.Y, pos.Z, dx, dz)
+				local v = max(visits[cell(pos.X + dx * 6, pos.Z + dz * 6)] or 0, visits[cell(pos.X + dx * 12, pos.Z + dz * 12)] or 0)
+				if hi < need then
+					-- đường tới điểm ngắm bị chắn: đánh dấu chỗ chạm tường để không lao vào lại (khỏi quanh quẩn trong hốc / vịnh)
+					mark(pos.X + dx * (hi + 0.8), pos.Z + dz * (hi + 0.8))
+					local mk = cell(pos.X + dx * (hi + 1), pos.Z + dz * (hi + 1))
+					visits[mk] = (visits[mk] or 0) + 2
+					visits[cellK] = (visits[cellK] or 0) + 1
+					if adist > 14 then nextPlan = min(nextPlan, now + 0.3) end -- vừa thấy thêm vật cản: tính lại đường sớm
+				end
+				local isBlocked = false
+				for _, b in ipairs(blocked) do
+					if now < b.t and abs(((bearing - b.th + math.pi) % (2 * math.pi)) - math.pi) < rad(25) then isBlocked = true end
+				end
+				if hi >= need and (plan and v <= 4 or v <= 2) and not isBlocked and groundAt(pos.X + dx * 4.5, pos.Y, pos.Z + dz * 4.5) then
+					chosenA, chosenHi, chosenLo = 0, hi, lo
+					th, dirx, dirz = bearing, dx, dz
+				end
+			end
+
+			if not chosenA then
+				local bestCost, bestAnyClear = nil, -1
+				local bestC, bestAny
+				for _, a in ipairs(ANGS) do
+					local t2 = bearing + rad(a)
+					local dx, dz = cos(t2), sin(t2)
+					local hi, lo = probe(pos.X, pos.Y, pos.Z, dx, dz)
+					local gOk = groundAt(pos.X + dx * 4.5, pos.Y, pos.Z + dz * 4.5)
+					if not gOk then mark(pos.X + dx * 4.5, pos.Z + dz * 4.5) end
+					local clear = gOk and hi or 0
+					local cost = abs(a)
+					if side ~= 0 and a ~= 0 and ((a > 0) ~= (side > 0)) and now < sideUntil then cost = cost + 25 end
+					cost = cost + math.min((visits[cell(pos.X + dx * 9, pos.Z + dz * 9)] or 0) * 12, 600) -- chỗ đã đi qua nhiều lần càng bị né mạnh
+					for _, b in ipairs(blocked) do
+						if now < b.t and abs(((t2 - b.th + math.pi) % (2 * math.pi)) - math.pi) < rad(25) then cost = cost + 150 end
+					end
+					if clear >= need and (not bestCost or cost < bestCost) then
+						bestCost, bestC = cost, { a, t2, dx, dz, hi, lo }
+					end
+					if clear > bestAnyClear or (clear == bestAnyClear and bestAny and abs(a) < abs(bestAny[1])) then
+						bestAnyClear, bestAny = clear, { a, t2, dx, dz, hi, lo }
+					end
+				end
+				local pick = bestC or bestAny
+				chosenA, th, dirx, dirz, chosenHi, chosenLo = pick[1], pick[2], pick[3], pick[4], pick[5], pick[6]
+				if chosenA ~= 0 then
+					side = (chosenA > 0) and 1 or -1
+					sideUntil = now + 2.5
+				end
+			end
+
+			-- vật thấp ngay trước mặt: nhảy qua
+			if chosenLo < 4.5 and chosenHi - chosenLo > 2 then hum.Jump = true end
+
+			-- ra lệnh đi
+			if chosenA == 0 and aimIsGoal and chosenHi >= dist then
+				hum:MoveTo(goal)
+			else
+				hum:MoveTo(Vector3.new(pos.X + dirx * 12, pos.Y, pos.Z + dirz * 12))
+			end
+
+			-- phát hiện kẹt: 0.7 giây mà nhích chưa tới 2 stud
+			if not samplePos then
+				samplePos, sampleT = pos, now
+			elseif now - sampleT >= 0.7 then
+				local moved = sqrt((pos.X - samplePos.X) ^ 2 + (pos.Z - samplePos.Z) ^ 2)
+				if moved < 2 then
+					stuckN = stuckN + 1
+					hum.Jump = true
+					blocked[#blocked + 1] = { th = th, t = now + 4 }
+					if #blocked > 8 then table.remove(blocked, 1) end
+					visits[cellK] = (visits[cellK] or 0) + 2
+					mark(pos.X + dirx * 3, pos.Z + dirz * 3) -- chỗ vừa kẹt = có vật cản
+					nextPlan = 0
+					side = (side == 0) and ((stuckN % 2 == 0) and 1 or -1) or -side
+					sideUntil = now + 3
+					if stuckN >= 2 then
+						-- lùi ra khỏi chỗ kẹt rồi mới chọn hướng khác
+						hum:MoveTo(Vector3.new(pos.X - dirx * 10, pos.Y, pos.Z - dirz * 10))
+						hum.Jump = true
+						task.wait(0.7)
+					end
+				elseif moved > 6 then
+					stuckN = 0
+				end
+				samplePos, sampleT = pos, now
+			end
+			task.wait(0.1)
+		end
+	end
+	return false, "hết giờ"
+end
+Nav.steer = function(goal, opts)
+	local ok, r, why = pcall(steerImpl, goal, opts)
+	if ok then return r, why end
+	return false, "lỗi né vật cản"
+end
+
+-- Nav.walkTo(pos, {stop, accept, timeout}): bắt đầu đi NGAY về phía đích (không đứng chờ tính đường).
+--  * Ưu tiên PathfindingService (bán kính thân to, không có thì thử bán kính nhỏ) và BÁM THEO đường đó, không đổi ý giữa chừng;
+--    kẹt 1 lần thì nhảy, kẹt lần 2 thì né cục bộ (Nav.steer) tới điểm đường kế tiếp, kẹt nữa mới dựng lại đường.
+--  * Không dựng được đường: đi bằng Nav.steer (tự dựng bản đồ vật cản + A*), từng chặng.
+--  * Sát đích (< 12 stud): đi thẳng có né vật cản. accept: đã tới trong chừng này stud mà không nhích thêm được thì coi như tới nơi.
 function Nav.walkTo(pos, opts)
 	opts = opts or {}
 	local stop = opts.stop or 5
+	local accept = opts.accept or stop
 	local timeout = opts.timeout or 60
 	local t0 = os.clock()
+	local function left() return timeout - (os.clock() - t0) end
 
 	local function arrived()
 		local _, root = navParts()
 		return root ~= nil and flatDist(root.Position, pos) <= stop and math.abs(root.Position.Y - pos.Y) < 15
 	end
-
-	-- đi thẳng tới pos (không đường dẫn), nhảy khi kẹt; dùng khi không dựng được đường
-	local function direct(maxTime)
-		local ws = os.clock()
-		local lastPos, lastMove = nil, os.clock()
-		while os.clock() - ws < maxTime and os.clock() - t0 < timeout do
-			local hum, root = navParts()
-			if not hum then return false end
-			if arrived() then return true end
-			hum:MoveTo(pos)
-			if lastPos and (root.Position - lastPos).Magnitude < 0.5 then
-				if os.clock() - lastMove > 0.8 then hum.Jump = true end
-			else
-				lastMove = os.clock()
-			end
-			lastPos = root.Position
-			task.wait(0.15)
-		end
-		return arrived()
+	local function nearEnough()
+		local _, root = navParts()
+		return root ~= nil and flatDist(root.Position, pos) <= accept and math.abs(root.Position.Y - pos.Y) < 15
 	end
 
-	local rebuilds = 0
-	while os.clock() - t0 < timeout do
+	do
+		local h = navParts()
+		if h then h:MoveTo(pos) end
+	end
+
+	local rebuilds, jamRounds = 0, 0
+	while left() > 0 do
 		local hum, root = navParts()
 		if not hum then return false end
 		if arrived() then return true end
 
-		local path = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6 })
-		local okPath = pcall(function() path:ComputePath(root.Position, pos) end)
-		if not (okPath and path.Status == Enum.PathStatus.Success) then
-			-- không dựng được đường (NPC nằm trong vật cản, hoặc khác đảo): thử đi thẳng một lúc, không được thì báo thất bại
-			return direct(8)
-		end
-
-		local wps = path:GetWaypoints()
-		for k = 2, #wps do
-			local wp = wps[k]
-			local h2, r2 = navParts()
-			if not h2 then return false end
-			if wp.Action == Enum.PathWaypointAction.Jump then h2.Jump = true end
-			h2:MoveTo(wp.Position)
-			local reached = false
-			local conn = h2.MoveToFinished:Connect(function() reached = true end)
-			local ws, lastPos, lastMove = os.clock(), r2.Position, os.clock()
-			while not reached and os.clock() - ws < 5 and os.clock() - t0 < timeout do
-				task.wait(0.1)
-				local _, r3 = navParts()
-				if not r3 then break end
-				if flatDist(r3.Position, pos) <= stop then break end
-				if (r3.Position - lastPos).Magnitude > 0.8 then
-					lastPos, lastMove = r3.Position, os.clock()
-				elseif os.clock() - lastMove > 1 then
-					h2.Jump = true
-					lastMove = os.clock()
-				end
+		if flatDist(root.Position, pos) < 12 then
+			local ok = Nav.steer(pos, { stop = stop, maxTime = math.min(left(), 14), patience = 8, nearOK = accept, water = opts.water })
+			if ok or arrived() or nearEnough() then return true end
+			rebuilds = rebuilds + 1
+			if rebuilds > 6 then break end
+		else
+			local path, okPath
+			for _, radius in ipairs(opts.water and {} or { 3, 1.5 }) do
+				path = PathfindingService:CreatePath({ AgentRadius = radius, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6 })
+				okPath = pcall(function() path:ComputePath(root.Position, pos) end) and path.Status == Enum.PathStatus.Success
+				if okPath then break end
 			end
-			conn:Disconnect()
-			if arrived() then return true end
-			if not reached then break end -- kẹt: dựng lại đường từ chỗ hiện tại
+			if not okPath or jamRounds >= 1 then
+				-- không có đường dẫn (hoặc đường dẫn cứ đưa vào chỗ kẹt): tự tìm đường bằng bản đồ vật cản
+				local ok = Nav.steer(pos, { stop = stop, maxTime = math.min(left(), 40), patience = 18, nearOK = accept, water = opts.water })
+				if ok or arrived() or nearEnough() then return true end
+				rebuilds = rebuilds + 1
+				if rebuilds > 8 then break end
+			else
+				local wps = path:GetWaypoints()
+				local jamsTotal = 0
+				for k = 2, #wps do
+					local wp = wps[k]
+					local h2, r2 = navParts()
+					if not h2 then return false end
+					if wp.Action == Enum.PathWaypointAction.Jump then h2.Jump = true end
+					h2:MoveTo(wp.Position)
+					local reached = false
+					local conn = h2.MoveToFinished:Connect(function() reached = true end)
+					local ws, lastPos, lastMove, jams = os.clock(), r2.Position, os.clock(), 0
+					while not reached and os.clock() - ws < 5 and left() > 0 do
+						task.wait(0.1)
+						local _, r3 = navParts()
+						if not r3 then break end
+						if flatDist(r3.Position, pos) <= stop then break end
+						if (r3.Position - lastPos).Magnitude > 0.8 then
+							lastPos, lastMove = r3.Position, os.clock()
+						elseif os.clock() - lastMove > 0.9 then
+							h2.Jump = true
+							lastMove = os.clock()
+							jams = jams + 1
+							if jams >= 2 then break end
+						end
+					end
+					conn:Disconnect()
+					if arrived() then return true end
+					if jams >= 2 then
+						jamsTotal = jamsTotal + 1
+						-- né cục bộ tới điểm đường kế tiếp rồi đi tiếp theo đường cũ (không dựng lại ngay)
+						Nav.steer(wp.Position, { stop = 3, maxTime = 4, patience = 4 })
+						if jamsTotal >= 2 then jamRounds = jamRounds + 1 break end
+					elseif not reached then
+						break
+					end
+				end
+				rebuilds = rebuilds + 1
+				if rebuilds > 8 then break end
+			end
 		end
-		rebuilds = rebuilds + 1
-		if rebuilds > 6 then break end
 	end
-	return arrived()
+	return arrived() or nearEnough()
 end
 
 function Nav.findSeller(fromPos)
@@ -600,6 +1047,138 @@ function Nav.findSeller(fromPos)
 	return best, bestD
 end
 end -- do (Nav)
+
+-- ==================================================
+-- ĐI BỘ TRÊN NƯỚC (chức năng ẩn, không có nút): chỉ can thiệp khi nhân vật THẬT SỰ rơi vào trạng thái bơi hoặc đang chạy sát mặt nước.
+-- Có 1 tấm đỡ vô hình đặt đúng mặt nước dưới chân (đi theo nhân vật), nhấc nhân vật lên mặt nước và đổi khỏi trạng thái bơi.
+-- Đứng yên câu cá ở mép nước thì KHÔNG đụng tới. Nhận mặt nước là Terrain Water hoặc part mặt nước (không va chạm, tên/vật liệu là nước).
+-- Tắt bằng getgenv().ChisatoWaterWalk = false (mặc định bật). W.proven = đã đứng vững trên tấm đỡ (lúc đó Nav mới coi nước là đi được).
+-- ==================================================
+Travel.Water = { on = true, proven = false, active = false }
+do
+	local W = Travel.Water
+	local platform
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.IgnoreWater = false
+	local lastList, onPadSince = -1e9, nil
+	local rp2 = RaycastParams.new() -- như rp nhưng tính cả xe: thấy vật rắn (xe, bến) dưới chân thì không dựng tấm đỡ
+	rp2.FilterType = Enum.RaycastFilterType.Exclude
+	rp2.IgnoreWater = false
+
+	local function park()
+		W.active, onPadSince = false, nil
+		if platform and platform.Parent then platform.Parent = nil end
+	end
+	function W.destroy()
+		W.on, W.destroyed = false, true
+		if platform then pcall(function() platform:Destroy() end) end
+		platform = nil
+	end
+
+	-- trúng mặt nước? (Terrain Water, hoặc part nước không va chạm)
+	local function isWaterHit(r)
+		if not r then return false end
+		if r.Material == Enum.Material.Water then return true end
+		local inst = r.Instance
+		if inst and inst:IsA("BasePart") and not inst:IsA("Terrain") and not inst.CanCollide then
+			local n = string.lower(inst.Name)
+			if inst.Material == Enum.Material.Water or n:find("water") or n:find("ocean") or n:find("sea") or n:find("lake") or n:find("river") then
+				return true
+			end
+		end
+		return false
+	end
+
+	function W.step()
+		local char = LocalPlayer.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		W.on = (env.ChisatoWaterWalk ~= false) and not W.destroyed
+		if not (W.on and hum and root and hum.Health > 0) or hum.SeatPart ~= nil then
+			park()
+			return
+		end
+		local now = os.clock()
+		if now - lastList > 1 then
+			lastList = now
+			local list = { char }
+			if platform then list[#list + 1] = platform end
+			rp2.FilterDescendantsInstances = { char, platform }
+			local cars = workspace:FindFirstChild("Cars")
+			if cars then list[#list + 1] = cars end
+			rp.FilterDescendantsInstances = list
+		end
+
+		local pos = root.Position
+		local state = hum:GetState()
+		local swimming = (state == Enum.HumanoidStateType.Swimming)
+		local moving = hum.MoveDirection.Magnitude > 0.1
+
+		-- đang không bơi và chưa dùng tấm đỡ: chỉ bắt đầu khi đang di chuyển sát mặt nước (không đụng lúc đứng yên câu cá)
+		if not W.active and not swimming and not moving then return end
+
+		-- vật rắn ngay dưới chân (xe, bến tàu, đất): tấm đỡ không được chen vào (làm xe nảy / bay lơ lửng) => nhả ra
+		if not swimming then
+			local sr = workspace:Raycast(pos, Vector3.new(0, -5.5, 0), rp2)
+			if sr and not isWaterHit(sr) then
+				park()
+				return
+			end
+		end
+
+		-- bắn tia từ trên cao xuống: gặp mặt nước trước -> có nước ngay dưới chân
+		local r = workspace:Raycast(Vector3.new(pos.X, pos.Y + 12, pos.Z), Vector3.new(0, -60, 0), rp)
+		if not isWaterHit(r) then
+			park()
+			return
+		end
+		local surface = r.Position.Y
+		local feet = pos.Y - 3
+		if pos.Y < surface - 8 then park() return end -- chìm quá sâu (vd đáy biển): không can thiệp
+		if not W.active then
+			-- bắt đầu: đang bơi, hoặc chân đang sát / trên mặt nước (không phải lội ở chỗ nước nông dưới mắt cá)
+			if not (swimming or (feet >= surface - 0.8 and feet <= surface + 4)) then return end
+			W.active = true
+		end
+
+		if not platform then
+			platform = Instance.new("Part")
+			platform.Name = "ChisatoWaterPad"
+			platform.Size = Vector3.new(9, 1, 9)
+			platform.Anchored = true
+			platform.CanCollide = true
+			platform.CanQuery = false
+			platform.CanTouch = false
+			platform.Transparency = 1
+			platform.CastShadow = false
+		end
+		pcall(function() platform.CollisionGroup = root.CollisionGroup end)
+		local vel = root.AssemblyLinearVelocity
+		platform.CFrame = CFrame.new(pos.X + vel.X * 0.03, surface - 0.5, pos.Z + vel.Z * 0.03)
+		if platform.Parent ~= workspace then platform.Parent = workspace end
+
+		-- đang bơi / chìm: nhấc lên mặt nước (từng đoạn ngắn) và thoát trạng thái bơi
+		if swimming or feet < surface - 0.3 then
+			pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+			if pos.Y < surface + 2.6 then
+				root.CFrame = root.CFrame + Vector3.new(0, math.min(2.5, surface + 3.2 - pos.Y), 0)
+			end
+			onPadSince = nil
+		else
+			-- đứng vững trên tấm đỡ đủ lâu: chức năng chạy được
+			if hum.FloorMaterial ~= Enum.Material.Air and hum.FloorMaterial ~= Enum.Material.Water then
+				onPadSince = onPadSince or now
+				if now - onPadSince > 0.5 then W.proven = true end
+			else
+				onPadSince = nil
+			end
+		end
+	end
+	table.insert(connections, RunService.Heartbeat:Connect(function()
+		pcall(W.step)
+	end))
+end
 
 -- ==================================================
 -- UI HỖ TRỢ (Tạo Element & Animation)
@@ -674,6 +1253,7 @@ if not okParent then
 end
 
 env.ChisatoHubCleanup = function()
+	if Travel.Water then pcall(Travel.Water.destroy) end
 	if Travel.Boat then Travel.Boat.stop = true end
 	isRunning = false
 	isAutoSkillRunning = false
@@ -975,7 +1555,7 @@ local function fishWatcher()
 		task.wait(waitTime)
 	end
 end
-task.spawn(fishWatcher)
+Travel.spawn(fishWatcher)
 
 -- ==================================================
 -- XỬ LÝ NHẤN NÚT VÀ MINIGAME
@@ -1445,6 +2025,100 @@ local function smartReelClick()
 	return false, nil
 end
 
+-- ==================================================
+-- NHẬN BIẾT THANH MÁU CỦA CÁ (HP bar) để biết lúc nào đang giằng co với cá
+-- Chưa có thanh máu: chỉ thả cần liên tục. Có thanh máu: bấm giật cần + bấm kỹ năng. Hết thanh máu: quay lại thả cần.
+-- Tên GUI thanh máu không biết chắc nên dò theo tên (health / hp / hpbar ... , hoặc tên bạn đặt ở Config.FISH_BAR_NAMES).
+-- Chưa từng thấy GUI nào như vậy => Fish.known() = false và script chạy kiểu cũ (không chặn gì). Nhận nhầm 1 thanh (vd máu người chơi)
+-- mà 90 giây không bắt được cá nào => tự loại thanh đó (Fish.bad).
+-- ==================================================
+Travel.Fish = { cands = {}, bad = {}, last = -1e9, seenAny = false }
+do
+	local F = Travel.Fish
+	local SKIP_GUI = {
+		Settings = true, Dialogue = true, SatchelModal = true, Backpack = true, Index = true, Store = true, Tooltip = true,
+		TopbarStandard = true, TopbarCentered = true, TopbarStandardClipped = true, TopbarCenteredClipped = true,
+		Cmdr = true, DamageCounterGui = true, NotificationGui = true, Trade = true, Gift = true, Quests = true, QuestsModal = true,
+	}
+	local PATTERNS = { "fishhp", "fish_hp", "fishhealth", "fish_health", "hpbar", "hp_bar", "healthbar", "health_bar", "bosshp", "boss_hp",
+		"bosshealth", "boss_health", "enemyhp", "enemy_hp", "enemyhealth", "targethp", "target_hp", "health" }
+
+	local function nameMatch(n)
+		n = string.lower(n)
+		if string.find(n, "template", 1, true) then return false end
+		if n == "hp" then return true end
+		local extra = Config.FISH_BAR_NAMES
+		if type(extra) == "table" then
+			for _, e in ipairs(extra) do
+				if n == string.lower(tostring(e)) then return true end
+			end
+		end
+		local g = env.ChisatoFishBar
+		if g and n == string.lower(tostring(g)) then return true end
+		for _, pat in ipairs(PATTERNS) do
+			if string.find(n, pat, 1, true) then return true end
+		end
+		return false
+	end
+
+	local function shown(o)
+		local cur = o
+		while cur and cur ~= PlayerGui do
+			if cur:IsA("GuiObject") and not cur.Visible then return false end
+			if cur:IsA("ScreenGui") and not cur.Enabled then return false end
+			cur = cur.Parent
+		end
+		if o:IsA("GuiObject") then
+			local sz = o.AbsoluteSize
+			if sz.X < 2 or sz.Y < 2 then return false end
+		end
+		return true
+	end
+
+	function F.scan()
+		local now = os.clock()
+		if now - F.last < 1.5 then return end
+		F.last = now
+		local list = {}
+		for _, o in ipairs(PlayerGui:GetDescendants()) do
+			if o:IsA("GuiObject") and nameMatch(o.Name) and not F.bad[o] then
+				local lc = o:FindFirstAncestorWhichIsA("LayerCollector")
+				if lc and lc:IsA("ScreenGui") and lc ~= ScreenGui and not SKIP_GUI[lc.Name] and not o:IsDescendantOf(ScreenGui)
+					and not isInsideTemplate(o) then
+					list[#list + 1] = o
+				end
+			end
+		end
+		F.cands = list
+		if #list > 0 then F.seenAny = true end
+	end
+
+	-- đã từng thấy GUI thanh máu chưa (chưa thì chạy kiểu cũ)
+	function F.known()
+		F.scan()
+		return F.seenAny
+	end
+
+	-- thanh máu của cá đang hiện?
+	function F.visible()
+		F.scan()
+		for _, o in ipairs(F.cands) do
+			if o.Parent and not F.bad[o] and shown(o) then return true end
+		end
+		return false
+	end
+
+	-- thanh hiện quá lâu mà không bắt được cá nào: coi như nhận nhầm, loại ra
+	function F.reject()
+		for _, o in ipairs(F.cands) do
+			if o.Parent and shown(o) then F.bad[o] = true end
+		end
+		F.cands = {}
+		F.seenAny = false
+		F.last = -1e9
+	end
+end
+
 local function pressKey(keyCode, holdTime)
 	VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
 	task.wait(holdTime or 0.1)
@@ -1751,23 +2425,45 @@ local function dialogueClickTry(targets, modes, stopFn)
 	end
 end
 
-local function runSellStrategies()
-	pcall(controllerSell)
-	task.wait(0.1)
-	pcall(packetSell)
-	task.wait(0.1)
+-- Chạy 1 hàm của game ở LUỒNG RIÊNG rồi đợi tối đa timeout giây. Các hàm của game (SellController, Packet...) tự tạm dừng luồng gọi nó
+-- rồi hẹn giờ đánh thức lại; gọi thẳng trong luồng của script thì luồng đó vừa chờ task.wait vừa bị game đánh thức =>
+-- lỗi "Cannot call task.defer on a thread that is already 'waiting'" in đỏ ở console (đã thấy ở Stardust.Packages.Packet).
+function Travel.callIsolated(fn, timeout)
+	local done = false
+	task.spawn(function()
+		pcall(fn)
+		done = true
+	end)
+	local t = 0
+	while not done and t < (timeout or 3) do
+		task.wait(0.1)
+		t = t + 0.1
+	end
+end
+
+-- Bán cá. Ưu tiên bấm giao diện (không đụng module game); còn đầy túi mà extra = true (lần thử thứ 2 trở đi)
+-- mới gọi thẳng SellController / Packet / remote (các phương án dự phòng dễ sinh lỗi console).
+local function runSellStrategies(extra)
+	local function emptied()
+		local c = getInventoryFullness()
+		return c == 0
+	end
 	pcall(guiSell)
 	task.wait(0.1)
+	if emptied() then return end
 	pcall(function()
-		dialogueClickTry({ "Sell All", "Bán tất cả" }, { "auto", "select", "signal", "noinset" }, function()
-			local c = getInventoryFullness()
-			return c == 0
-		end)
+		dialogueClickTry({ "Sell All", "Bán tất cả" }, { "auto", "select", "signal", "noinset" }, emptied)
 	end)
 	task.wait(0.2)
 	pcall(function() dialogueClickTry({ "Xác nhận bán", "Confirm" }, { "auto", "signal" }) end)
 	task.wait(0.3)
-	pcall(rawRemote)
+	if extra and not emptied() then
+		Travel.callIsolated(controllerSell, 3)
+		task.wait(0.1)
+		Travel.callIsolated(packetSell, 3)
+		task.wait(0.1)
+		Travel.callIsolated(rawRemote, 2)
+	end
 	task.wait(0.1)
 end
 
@@ -1860,7 +2556,7 @@ function Travel.openPrompt(resolve, opts)
 			-- 1) đứng trong tầm kích hoạt (gần hơn ~85% tầm). Chỉ đi bộ lại khi thật sự ngoài tầm, tối đa 2 lần (đỡ tốn thời gian)
 			if pos and walks < 2 and (root.Position - pos).Magnitude > reach * 0.85 then
 				walks = walks + 1
-				Nav.walkTo(pos, { stop = math.max(3, reach * 0.5), timeout = 20 })
+				Nav.walkTo(pos, { stop = math.max(3, reach * 0.5), accept = reach * 0.85, timeout = 20 })
 				_, root = Nav.parts()
 				if not root then return false, "mất nhân vật" end
 			end
@@ -1954,7 +2650,7 @@ local function sellTrip()
 			local sellerPos = Nav.findSeller(root.Position)
 			if not sellerPos then error("không thấy NPC bán cá nào đang tải quanh đây") end
 			sellState = "Đang đi bộ tới NPC bán cá..."
-			if not Nav.walkTo(sellerPos, { stop = Config.SELL_WALK_STOP, timeout = Config.SELL_WALK_TIMEOUT }) then
+			if not Nav.walkTo(sellerPos, { stop = Config.SELL_WALK_STOP, accept = 14, timeout = Config.SELL_WALK_TIMEOUT }) then -- accept: tới trong 14 stud là đủ (quầy / bàn chắn không đứng sát được), bước mở hộp thoại tự đi sát thêm
 				error("không đi bộ tới được NPC bán cá")
 			end
 			task.wait(0.4)
@@ -1973,7 +2669,7 @@ local function sellTrip()
 			else
 				sellState = "Túi vẫn đầy, bán lại lần " .. attempt .. "..."
 			end
-			runSellStrategies()
+			runSellStrategies(attempt >= 2)
 			task.wait(1.5)
 			local c, m = getInventoryFullness()
 			if not (m and c >= m) then break end
@@ -1993,7 +2689,7 @@ local function sellTrip()
 	if ok or Config.SELL_WALK then sellState = "Đang về chỗ cũ..." end
 	if Config.SELL_WALK then
 		-- đi bộ về đúng chỗ đang farm; không về được mà vẫn cùng đảo (gần) thì mới tp, tránh bị game reset vì tp xa
-		Nav.walkTo(originalCFrame.Position, { stop = 3, timeout = Config.SELL_WALK_TIMEOUT })
+		Nav.walkTo(originalCFrame.Position, { stop = 3, accept = 8, timeout = Config.SELL_WALK_TIMEOUT })
 	else
 		pcall(FastTeleport, originalCFrame)
 	end
@@ -2087,55 +2783,96 @@ local function autoSkillLoop()
 	local ok, err = pcall(function()
 		while isAutoSkillRunning do
 			local pressed = false
-			for _, sk in ipairs(skillKeys) do
-				if not isAutoSkillRunning then break end
-				if Config.SKILL_ENABLED[sk[1]] then
-					pressKey(sk[2], 0.1)
-					task.wait(Config.SKILL_DELAY)
-					pressed = true
+			-- chỉ dùng chiêu khi thanh máu cá đang hiện (chưa nhận diện được thanh máu thì bấm như cũ)
+			local gated = Travel.Fish.known() and not Travel.Fish.visible()
+			if not gated then
+				for _, sk in ipairs(skillKeys) do
+					if not isAutoSkillRunning then break end
+					if Config.SKILL_ENABLED[sk[1]] then
+						pressKey(sk[2], 0.1)
+						task.wait(Config.SKILL_DELAY)
+						pressed = true
+					end
 				end
 			end
-			-- tắt hết kỹ năng thì nghỉ một chút, tránh vòng lặp chạy không nghỉ
-			if not pressed then task.wait(0.3) end
+			-- tắt hết kỹ năng / chưa có thanh máu thì nghỉ một chút, tránh vòng lặp chạy không nghỉ
+			if not pressed then task.wait(gated and 0.2 or 0.3) end
 		end
 	end)
 	skillLoopActive = false
 end
 
 -- VÒNG LẶP MAIN CÂU CÁ
+-- Có nhận diện được thanh máu cá: CHƯA có thanh máu => chỉ thả cần liên tục (không giật cần); CÓ thanh máu => giật cần / QTE liên tục
+-- (kỹ năng do autoSkillLoop bấm, cũng chỉ khi có thanh máu); hết thanh máu => đợi thông báo bắt cá rồi quay lại thả cần.
+-- Chưa nhận diện được thanh máu: chạy kiểu cũ (thả cần, đợi 1 giây, giật cần tới khi bắt được cá).
 local function mainLoop()
 	if mainLoopActive then return end
 	mainLoopActive = true
+	local Fish = Travel.Fish
+
+	local function afterCatch()
+		for _ = 1, 6 do
+			if not isRunning then return end
+			simulateClick()
+			task.wait(0.2)
+		end
+		task.wait(0.3)
+	end
 
 	local ok, err = pcall(function()
 		while isRunning do
 			ensureRodEquipped()
 			if not isRunning then break end
 			local serialAtCast = catchSerial
-			pressFishingButton(Config.HOLD_TIME)
 
-			if not isRunning then break end
-			task.wait(1)
-
-			if not isRunning then break end
-			local isFishCaught = false
-			local startedAt = os.clock()
-
-			while isRunning and not isFishCaught do
-				isFishCaught = (catchSerial ~= serialAtCast)
-				if not isFishCaught then
-					if os.clock() - startedAt > Config.CATCH_TIMEOUT then break end
-					smartReelClick()
-					task.wait(0.1)
+			if Fish.known() then
+				-- ===== chế độ theo thanh máu cá =====
+				if Fish.visible() then
+					local fightStart = os.clock()
+					while isRunning and Fish.visible() and catchSerial == serialAtCast do
+						smartReelClick()
+						task.wait(0.1)
+						if os.clock() - fightStart > 90 then
+							Fish.reject() -- thanh "máu" hiện suốt 90 giây không bắt được cá: nhận nhầm GUI khác
+							break
+						end
+					end
+					-- thanh máu tắt: đợi thông báo bắt cá (tối đa 3 giây)
+					local w = 0
+					while isRunning and catchSerial == serialAtCast and w < 3 do
+						task.wait(0.1)
+						w = w + 0.1
+					end
+					if isRunning and catchSerial ~= serialAtCast then afterCatch() end
+				else
+					-- chưa có thanh máu: chỉ thả cần
+					pressFishingButton(Config.HOLD_TIME)
+					local w = 0
+					while isRunning and w < (Config.CAST_GAP or 0.8) and not Fish.visible() do
+						task.wait(0.1)
+						w = w + 0.1
+					end
+					if isRunning and catchSerial ~= serialAtCast then afterCatch() end
 				end
-			end
-
-			if isRunning and isFishCaught then
-				for _ = 1, 6 do
-					simulateClick()
-					task.wait(0.2)
+			else
+				-- ===== kiểu cũ (chưa nhận diện được thanh máu) =====
+				pressFishingButton(Config.HOLD_TIME)
+				if not isRunning then break end
+				task.wait(1)
+				if not isRunning then break end
+				local isFishCaught = false
+				local startedAt = os.clock()
+				while isRunning and not isFishCaught do
+					isFishCaught = (catchSerial ~= serialAtCast)
+					if not isFishCaught then
+						if os.clock() - startedAt > Config.CATCH_TIMEOUT then break end
+						if Fish.known() then break end -- vừa nhận ra thanh máu: chuyển sang chế độ theo thanh máu
+						smartReelClick()
+						task.wait(0.1)
+					end
 				end
-				task.wait(0.3)
+				if isRunning and isFishCaught then afterCatch() end
 			end
 		end
 	end)
@@ -3035,8 +3772,8 @@ local function fixLagStart()
 			if fixLagOn then pcall(fixLagHide, inst) end
 		end)
 	end)
-	task.spawn(function() pcall(applyGameSettings, true) end) -- true: người dùng vừa bật Fix Lag => thử lại mọi mục từ đầu
-	task.spawn(fixLagLoop)
+	Travel.spawn(function() pcall(applyGameSettings, true) end) -- true: người dùng vừa bật Fix Lag => thử lại mọi mục từ đầu
+	Travel.spawn(fixLagLoop)
 end
 
 fixLagStop = function()
@@ -3251,8 +3988,9 @@ CreateSection(StatusTab, "Chisato Hub Status")
 statusLabel = Create("TextLabel", { Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Text = "OFF", TextColor3 = UITheme.SubText, TextSize = 19, Font = Enum.Font.GothamBold, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, ZIndex = 21 }, StatusTab)
 
 local bagLabel = Create("TextLabel", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = "", TextColor3 = UITheme.Text, TextSize = 13, Font = Enum.Font.GothamMedium, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 21 }, StatusTab)
+Travel.fishBarLabel = Create("TextLabel", { Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1, Text = "", TextColor3 = UITheme.SubText, TextSize = 12, Font = Enum.Font.Gotham, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 21 }, StatusTab)
 local calibLabel = Create("TextLabel", { Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Text = "", TextColor3 = UITheme.SubText, TextSize = 11, Font = Enum.Font.Gotham, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 21 }, StatusTab)
-task.spawn(function()
+Travel.spawn(function()
 	while ScreenGui.Parent do
 		local cur, mx = getInventoryFullness()
 		if mx then
@@ -3261,6 +3999,11 @@ task.spawn(function()
 			bagLabel.Text = string.format("Túi đồ: %d/? (chưa đọc được sức chứa túi)", cur)
 		end
 		calibLabel.Text = calibSummary()
+		if Travel.Fish.known() then
+			Travel.fishBarLabel.Text = "Thanh máu cá: " .. (Travel.Fish.visible() and "đang hiện (giật cần + dùng chiêu)" or "chưa có (đang thả cần)")
+		else
+			Travel.fishBarLabel.Text = "Thanh máu cá: chưa nhận diện (chạy kiểu cũ)"
+		end
 		task.wait(1)
 	end
 end)
@@ -3279,8 +4022,8 @@ farmToggle = CreateToggle(FarmTab, "Auto Farm", false, function(v)
 	Config.AUTO_QTE = v
 	setStatus("")
 	if isRunning then
-		task.spawn(mainLoop)
-		task.spawn(autoSkillLoop)
+		Travel.spawn(mainLoop)
+		Travel.spawn(autoSkillLoop)
 	end
 end)
 
@@ -3345,7 +4088,7 @@ CreateSection(FarmTab, "Bán Cá")
 CreateToggle(FarmTab, "Auto Sell (full đồ sẽ bán)", false, function(v)
 	isAutoSellRunning = v
 	if isAutoSellRunning then
-		task.spawn(autoSellLoop)
+		Travel.spawn(autoSellLoop)
 	end
 end)
 
@@ -3356,11 +4099,11 @@ CreateToggle(FarmTab, "Tự khoá cá Huyền thoại trở lên", false, functi
 	if v then
 		LockFish.fails = 0
 		LockFish.pauseUntil = 0
-		task.spawn(LockFish.loop)
+		Travel.spawn(LockFish.loop)
 	end
 end)
 CreateButton(FarmTab, "Khoá cá Huyền thoại+ ngay (kiểm tra túi)", function()
-	task.spawn(LockFish.manual)
+	Travel.spawn(LockFish.manual)
 end)
 
 -- ==================================================
@@ -3385,7 +4128,7 @@ for islandIdx, island in ipairs(Islands) do
 	local name, pos = island[1], island[2]
 	CreateButton(IslandGrid, "Tới " .. name, function()
 		if not Travel.try("island") then return end -- đang bán cá / đang dịch chuyển khác: bỏ qua cú bấm
-		task.spawn(function()
+		Travel.spawn(function()
 			-- không dùng dịch chuyển: đi xe (gọi ở NPC bán xe gần nhất) tới đảo, đi bộ nốt
 			local ok2, why = pcall(Travel.Boat.go, pos, Config.BOAT_CHOICE, islandIdx)
 			if not ok2 or why == false then pcall(notifyOwnFish, "Đi xe", "lỗi", "không tới được " .. name, true, 5) end
@@ -3571,7 +4314,7 @@ end
 -- Đảo xa thì yêu cầu game tải đảo và quét lại trước để chắc chắn boss vẫn còn (thông tin cũ có thể đã hết hạn).
 teleportToBoss = function(i)
 	if sellBusy or not Travel.try("bosstp") then return end -- tránh tp chồng lên lúc đang đi bán cá / dịch chuyển khác
-	task.spawn(function()
+	Travel.spawn(function()
 		local ok, err = pcall(function()
 			local island = Islands[i]
 			local mem = refreshBossIsland(i)
@@ -3658,7 +4401,7 @@ local function runBossBatch()
 	if bossBatchStartedAt == myRun then bossBatchRunning = false end
 end
 
-task.spawn(function()
+Travel.spawn(function()
 	local wasActive = {}
 	local baselineDone = false
 	while ScreenGui.Parent do
@@ -4579,7 +5322,7 @@ Travel.Boat = (function()
 			if not hum then return false, "không thấy nhân vật" end
 			if hum.SeatPart == seat then return true end
 			if (root.Position - seat.Position).Magnitude > 8 then
-				Nav.walkTo(seat.Position, { stop = 5, timeout = 40 })
+				Nav.walkTo(seat.Position, { stop = 4, accept = 7, timeout = 40, water = true })
 			end
 			local prompt = seat:FindFirstChildWhichIsA("ProximityPrompt", true)
 			if prompt and fireproximityprompt then
@@ -4602,14 +5345,33 @@ Travel.Boat = (function()
 	end
 
 	-- Nhảy khỏi ghế
+	-- Đợi xe gần đứng yên rồi mới bước xuống (nhảy khi xe còn chạy làm xe + người văng / bay lơ lửng), sau đó đợi tiếp đất.
 	function Boat.exit()
 		local hum = Nav.parts()
 		if not hum then return end
+		local seat = hum.SeatPart
+		if not seat then return end
+		local t = 0
+		while t < 5 and seat.AssemblyLinearVelocity.Magnitude > 3 do
+			task.wait(0.2)
+			t = t + 0.2
+		end
 		for _ = 1, 4 do
+			hum = Nav.parts()
+			if not hum then return end
+			if hum.SeatPart == nil then break end
+			hum.Sit = false
 			hum.Jump = true
-			pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-			task.wait(0.5)
-			if hum.SeatPart == nil then return end
+			task.wait(0.8)
+		end
+		local w = 0
+		while w < 2.5 do
+			hum = Nav.parts()
+			if not hum then return end
+			local st = hum:GetState()
+			if hum.SeatPart == nil and st ~= Enum.HumanoidStateType.Freefall and st ~= Enum.HumanoidStateType.Jumping then break end
+			task.wait(0.15)
+			w = w + 0.15
 		end
 	end
 
@@ -4692,6 +5454,12 @@ Travel.Boat = (function()
 		local isl = Islands[idx][2]
 		local gx0, gz0 = isl.X, isl.Z
 		local R = Boat.ISLAND_R
+		-- opts.point: đích là 1 điểm trên mặt nước (câu boss ngay trên xe) thay vì bờ đảo; dừng khi cách điểm đó <= opts.range.
+		-- Chế độ này KHÔNG bỏ qua đảo khi tới gần (vẫn né vách / đá), nên không còn lao đầu vào vách.
+		local P = opts.point
+		local range = opts.range or 55
+		local stuckBase = nil
+		if P then gx0, gz0, R = P.X, P.Z, 0 end
 
 		-- bề ngang thân xe (nửa bề ngang + đệm)
 		local w = 8
@@ -4783,7 +5551,8 @@ Travel.Boat = (function()
 			local m = sqrt(ux * ux + uz * uz)
 			if m < 1 then ux, uz, m = 1, 0, 1 end
 			ux, uz = ux / m, uz / m
-			pts[#pts + 1] = { x = gx0 + ux * (R * 1.35 + 120), z = gz0 + uz * (R * 1.35 + 120) }
+			local back = R * 1.35 + (P and 45 or 120)
+			pts[#pts + 1] = { x = gx0 + ux * back, z = gz0 + uz * back }
 			return pts
 		end
 
@@ -4819,7 +5588,7 @@ Travel.Boat = (function()
 
 				local dgc = sqrt((px - gx0) ^ 2 + (pz - gz0) ^ 2)
 				local was = approach
-				approach = dgc < approachD
+				approach = (not P) and dgc < approachD
 				if approach ~= was then
 					setFilter(approach)
 					if approach then stuckAtApproach = S.stuckN end
@@ -4852,13 +5621,15 @@ Travel.Boat = (function()
 					end
 					gx, gz, reach, isShore = wps[wpi].x, wps[wpi].z, 80, false
 				else
-					-- đã tới điểm áp sát hoặc đang áp sát: nhắm điểm gần nhất của đảo đích
-					if os.clock() - lastShoreT > 1 or not shore then
+					-- đã tới điểm áp sát hoặc đang áp sát: nhắm điểm gần nhất của đảo đích (chế độ điểm đích: nhắm thẳng điểm đó)
+					if not P and (os.clock() - lastShoreT > 1 or not shore) then
 						lastShoreT = os.clock()
 						local pt = Boat.nearestPart(idx, pos)
 						if pt then shore = pt end
 					end
-					if shore then
+					if P then
+						gx, gz, reach, isShore = P.X, P.Z, range, true
+					elseif shore then
 						gx, gz, reach, isShore = shore.X, shore.Z, 18, true
 					else
 						gx, gz, reach, isShore = gx0, gz0, 30, true
@@ -4876,6 +5647,15 @@ Travel.Boat = (function()
 
 				local thr, steer, inf = Core.step(S, t, px, pz, lv.X, lv.Z, gx, gz, cast, { look = 200, w = w, approach = approach })
 				ctl.thr, ctl.steer, info = thr, steer, inf
+
+				-- chế độ điểm đích: tới gần điểm đó mà kẹt (xe áp sát vách, không nhích được nữa) thì câu luôn từ chỗ này
+				if P and dgc < 260 then
+					stuckBase = stuckBase or S.stuckN
+					if S.stuckN - stuckBase >= 2 and dgc < 140 then
+						reached = true
+						return
+					end
+				end
 
 				-- tới gần bờ mà kẹt (xe đã cập bờ, không nhích được nữa) thì coi như tới nơi
 				if approach and S.stuckN - stuckAtApproach >= 2 then
@@ -4899,7 +5679,7 @@ Travel.Boat = (function()
 				if os.clock() >= nextStream then
 					nextStream = os.clock() + 6
 					BossScan.busyUntil = os.clock() + 8
-					task.spawn(requestStream, Vector3.new(gx0, pos.Y, gz0), 3)
+					Travel.spawn(requestStream, Vector3.new(gx0, pos.Y, gz0), 3)
 				end
 
 				if os.clock() >= nextStatus then
@@ -4917,25 +5697,94 @@ Travel.Boat = (function()
 		return false, why or "không rõ"
 	end
 
-	-- Nhảy từ xe lên part gần nhất: nhảy + đi về phía điểm đó, thử vài lần tới khi đứng được trên đảo.
-	function Boat.hopOnto(point)
-		for _ = 1, 6 do
-			local hum = Nav.parts()
+	-- Nhảy khỏi xe lên đảo VÀ chạy luôn (không đứng chờ): vừa nhảy liên tục vừa đi về phía điểm bờ, xong là trả về ngay
+	-- để bước sau đi tiếp tới toạ độ đảo mà không bị khựng. Trả về true khi chân đã đứng trên đất đảo.
+	function Boat.leap(point, dest)
+		local rp = RaycastParams.new()
+		rp.FilterType = Enum.RaycastFilterType.Exclude
+		local function onIsland(root)
+			local list = { LocalPlayer.Character }
+			local cars = workspace:FindFirstChild("Cars")
+			if cars then list[#list + 1] = cars end
+			rp.FilterDescendantsInstances = list
+			local r = workspace:Raycast(root.Position, Vector3.new(0, -8, 0), rp)
+			return r ~= nil and r.Material ~= Enum.Material.Water and r.Position.Y > point.Y - 5
+		end
+		local t0, nextJump = os.clock(), 0
+		while os.clock() - t0 < 4.5 do
+			local hum, root = Nav.parts()
 			if not hum then return false end
-			hum.Jump = true
-			pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-			hum:MoveTo(point + Vector3.new(0, 1, 0))
-			for _ = 1, 9 do
-				task.wait(0.1)
-				local h2, root = Nav.parts()
-				if not h2 then return false end
-				local flat = sqrt((root.Position.X - point.X) ^ 2 + (root.Position.Z - point.Z) ^ 2)
-				if h2.SeatPart == nil and flat < 10 and root.Position.Y > point.Y - 4 and h2.FloorMaterial ~= Enum.Material.Air then
-					return true
+			local now = os.clock()
+			local flat = sqrt((root.Position.X - point.X) ^ 2 + (root.Position.Z - point.Z) ^ 2)
+			if hum.SeatPart == nil and flat < 14 and hum.FloorMaterial ~= Enum.Material.Air and onIsland(root) then
+				return true
+			end
+			-- chưa tới sát bờ: chạy về điểm bờ; tới rồi mà chưa lên được thì chạy thẳng về toạ độ đảo
+			if flat > 4 then
+				hum:MoveTo(Vector3.new(point.X, root.Position.Y, point.Z))
+			elseif dest then
+				hum:MoveTo(dest)
+			end
+			if now >= nextJump then
+				hum.Sit = false
+				hum.Jump = true
+				pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+				nextJump = now + 0.4
+			end
+			task.wait(0.05)
+		end
+		return false
+	end
+
+	-- Auto Câu Boss: lái xe tới cách điểm boss <= Config.BOSS_BOAT_RANGE rồi xuống ghế, đứng ngay trên xe để câu
+	-- (không cần lên đảo, nên không bị kẹt vách / cây / nhà). Trả về true khi đã tới, hoặc false + lý do.
+	function Boat.goFish(point, choice, idx)
+		local _, root = Nav.parts()
+		if not root then return false, "không thấy nhân vật" end
+		idx = idx or Boat.nearestIsland(point)
+		local range = Config.BOSS_BOAT_RANGE or 55
+		local function dist()
+			local _, r = Nav.parts()
+			return r and flatDist(r.Position, point) or huge
+		end
+		if dist() <= range then return true end
+
+		local t0 = os.clock()
+		local totalMax = Config.BOAT_TOTAL_TIMEOUT or 700
+		local retries = Config.BOAT_RETRIES or 3
+		local arrived, why = false, nil
+		for attempt = 1, retries do
+			if Boat.stop or os.clock() - t0 > totalMax then break end
+			local car, err = Boat.ensureCar(choice)
+			if not car then
+				why = err
+				if attempt >= 2 then break end
+				task.wait(1.5)
+			else
+				local seated, berr = Boat.board(car)
+				if not seated then
+					Boat.badCar[car] = true
+					why = berr or "không lên được xe"
+				else
+					local left = totalMax - (os.clock() - t0)
+					local ok, res = Boat.drive(idx, { timeout = clamp(left, 60, Config.BOAT_TIMEOUT), point = point, range = range })
+					if ok then
+						arrived = true
+						break
+					end
+					why = "lái xe: " .. tostring(res)
 				end
 			end
 		end
-		return false
+		-- lái chưa xong nhưng xe đã nằm gần boss thì vẫn câu từ xe
+		if not arrived and not Boat.stop then
+			local hum, r = Nav.parts()
+			if hum and r and hum.SeatPart ~= nil and flatDist(r.Position, point) <= range * 2 then arrived = true end
+		end
+		if not arrived then return false, why end
+		status("Xuống ghế, đứng trên xe câu boss...")
+		Boat.exit()
+		return true
 	end
 
 	-- Đi tới targetPos (Vector3) bằng xe, targetPos nằm trên đảo thứ idx (mặc định đảo gần targetPos nhất):
@@ -4957,12 +5806,13 @@ Travel.Boat = (function()
 
 		-- cùng đảo (gần toạ độ đảo hoặc gần đích): đi bộ luôn
 		if flatTo(targetPos) < 120 then
-			return Nav.walkTo(targetPos, { stop = 4, timeout = 90 })
+			local w = Nav.walkTo(targetPos, { stop = 4, timeout = 90 })
+			return w or flatTo(targetPos) < 26
 		end
 		if Boat.nearestIsland(root.Position) == idx and flatTo(isl[2]) < 400 then
-			if Nav.walkTo(isl[2], { stop = 6, timeout = 90 }) then
-				return Nav.walkTo(targetPos, { stop = 4, timeout = 90 })
-			end
+			Nav.walkTo(isl[2], { stop = 6, timeout = 90 })
+			local w = Nav.walkTo(targetPos, { stop = 4, timeout = 90 })
+			return w or flatTo(targetPos) < 26
 		end
 
 		local t0 = os.clock()
@@ -5008,21 +5858,22 @@ Travel.Boat = (function()
 		status("Nhảy lên đảo...")
 		local _, r1 = Nav.parts()
 		local point = shore or (r1 and (Boat.nearestPart(idx, r1.Position)))
-		Boat.exit()
 		local hopped = false
-		if point then hopped = Boat.hopOnto(point) end
+		if point then hopped = Boat.leap(point, isl[2]) end
 		if not hopped then
 			-- thử lại với điểm gần nhất tính theo chỗ đang đứng
 			local _, r2 = Nav.parts()
 			local p2 = r2 and (Boat.nearestPart(idx, r2.Position))
-			if p2 then hopped = Boat.hopOnto(p2) end
+			if p2 then hopped = Boat.leap(p2, isl[2]) end
 		end
 
 		status("Đi bộ tới " .. isl[1] .. "...")
 		local walked = Nav.walkTo(isl[2], { stop = 6, timeout = 90 })
-		if walked then
-			walked = Nav.walkTo(targetPos, { stop = 4, timeout = 90 })
+		if (targetPos - isl[2]).Magnitude > 8 then
+			walked = Nav.walkTo(targetPos, { stop = 4, timeout = 90 }) -- thử cả khi chưa tới toạ độ đảo (né vật cản tự tìm đường)
 		end
+		-- toạ độ đứng có thể nằm giữa đá / cây: tới được trong 26 stud là đủ, bước sau tự chỉnh chỗ đứng (dịch rất ngắn)
+		if not walked and flatTo(targetPos) < 26 then walked = true end
 		local fail
 		if not hopped then fail = "chưa nhảy lên được đảo" end
 		return walked, fail
@@ -5153,6 +6004,11 @@ do
 		local char = LocalPlayer.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 		if not root then return "nochar" end
+		if Travel.bossBoat then
+			-- câu trên xe: xe có thể trôi nhẹ, không kéo về chỗ cũ, chỉ giữ hướng nhìn về boss
+			if facingOff(root, bossPos) > 12 then aimAt(bossPos) end
+			return "ok"
+		end
 		local drift = (root.Position - standCF.Position).Magnitude
 		if drift > 60 then return "left" end
 		if drift > 6 then
@@ -5190,13 +6046,30 @@ do
 			autoBossState = "Đang tới boss " .. island[1] .. "..."
 			-- mặc định đi bằng xe: tới NPC bán xe gần nhất chỗ đang đứng, gọi xe, lái tới boss (không dùng dịch chuyển)
 			autoBossState = "Đang đi xe tới boss " .. island[1] .. "..."
-			local bOk, bWhy = Travel.Boat.go(standPos, Config.BOAT_CHOICE, i)
+			local bOk, bWhy, boatMode = false, nil, false
+			if Config.BOSS_BOAT_FISH ~= false then
+				-- ưu tiên: lái xe tới gần boss rồi câu ngay trên xe
+				bOk, bWhy = Travel.Boat.goFish(bossPos, Config.BOAT_CHOICE, i)
+				boatMode = bOk
+			end
+			if not bOk then
+				-- không được thì đi xe lên đảo rồi đi bộ tới chỗ đứng
+				bOk, bWhy = Travel.Boat.go(standPos, Config.BOAT_CHOICE, i)
+			end
 			if not bOk then
 				pcall(notifyOwnFish, "Đi xe", "lỗi", bWhy or "không tới được boss", true, 5)
 				return
 			end
+			Travel.bossBoat = boatMode
 			local _, r0 = Travel.Nav.parts()
-			if r0 and (r0.Position - goal.Position).Magnitude < 30 then FastTeleport(goal) end -- chỉnh chỗ đứng + hướng (dịch rất ngắn)
+			if boatMode then
+				if r0 then
+					local flat2 = Vector3.new(bossPos.X, r0.Position.Y, bossPos.Z)
+					goal = ((flat2 - r0.Position).Magnitude > 1) and CFrame.lookAt(r0.Position, flat2) or CFrame.new(r0.Position)
+				end
+			elseif r0 and (r0.Position - goal.Position).Magnitude < 30 then
+				FastTeleport(goal) -- chỉnh chỗ đứng + hướng (dịch rất ngắn)
+			end
 			task.wait(0.3)
 			aimAt(bossPos) -- xoay cả nhân vật lẫn camera về phía boss
 			arrived = true
@@ -5309,7 +6182,7 @@ do
 		autoBossOn = v
 		if v then
 			autoBossState = "Chờ boss spawn"
-			task.spawn(autoBossLoop)
+			Travel.spawn(autoBossLoop)
 		else
 			autoBossState = ""
 		end
@@ -5317,7 +6190,7 @@ do
 end
 
 -- Quét lại toàn bộ đảo 1-6 (tuần tự) mỗi Config.BOSS_STREAM_INTERVAL giây
-task.spawn(function()
+Travel.spawn(function()
 	task.wait(4)
 	while ScreenGui.Parent do
 		local startedAt = os.clock()
@@ -5417,7 +6290,7 @@ CreateButton(SettingTab, "Hiệu chỉnh lại bấm", function()
 	Calib = {}
 	CalibInfo.scale = {}
 	CalibInfo.touchDead = false
-	task.spawn(preCalibrate)
+	Travel.spawn(preCalibrate)
 end)
 
 CreateSection(SettingTab, "Code")
@@ -5425,7 +6298,7 @@ local REDEEM_BUTTON_TEXT = "Nhập tất cả Code trong game"
 local redeemButton
 redeemButton = CreateButton(SettingTab, REDEEM_BUTTON_TEXT, function()
 	if redeeming then return end
-	task.spawn(function()
+	Travel.spawn(function()
 		redeemAllCodes(function(text) redeemButton.Text = text end)
 		redeemButton.Text = REDEEM_BUTTON_TEXT
 	end)
@@ -5440,7 +6313,7 @@ CreateToggle(SettingTab, "Fix Lag", false, function(v)
 	end
 end)
 
-task.spawn(function()
+Travel.spawn(function()
 	task.wait(1)
 	pcall(preCalibrate)
 end)
