@@ -94,6 +94,7 @@
             z-index: 99999999;
             box-shadow: 0 0 15px rgba(255, 121, 198, 0.3);
             display: none;
+            text-align: center;
         }
 
         /* KHUNG CHỨA QUẢNG CÁO */
@@ -193,36 +194,35 @@
         </div>
 
         <div class="links-wrapper">
-            <a href="https://vuotnhanh.com/H7eQ" target="_blank" class="link-card ios" data-ad-btn="ios">
+            <a href="https://vuotnhanh.com/H7eQ" target="_blank" class="link-card ios">
                 <i class="fa-brands fa-apple"></i>
                 <span class="link-text">Tải cho iOS (IPA)</span>
             </a>
-            <a href="https://vuotnhanh.com/bADq" target="_blank" class="link-card android" data-ad-btn="android">
+            <a href="https://vuotnhanh.com/bADq" target="_blank" class="link-card android">
                 <i class="fa-brands fa-android"></i>
                 <span class="link-text">Tải cho Android (APK)</span>
             </a>
-            <a href="https://arwf.org/4/24be8a4e3ef1917d9a9394c9f7c29170" target="_blank" class="link-card windows" data-ad-btn="windows">
+            <a href="https://arwf.org/4/24be8a4e3ef1917d9a9394c9f7c29170" target="_blank" class="link-card windows">
                 <i class="fa-brands fa-windows"></i>
                 <span class="link-text">Tải cho Windows (EXE)</span>
             </a>
-            <a href="https://vuotnhanh.com/8X1m" target="_blank" class="link-card hack" data-ad-btn="hack">
+            <a href="https://vuotnhanh.com/8X1m" target="_blank" class="link-card hack">
                 <i class="fa-solid fa-dragon"></i>
                 <span class="link-text">Hack Map Liên Quân (IPA)</span>
             </a>
-            <a href="https://vuotnhanh.com/xHfg" target="_blank" class="link-card fc" data-ad-btn="fc">
+            <a href="https://vuotnhanh.com/xHfg" target="_blank" class="link-card fc">
                 <i class="fa-regular fa-futbol"></i>
                 <span class="link-text">FC Mobile VN (IPA)</span>
             </a>
 
-            <!-- VỊ TRÍ ADS NATIVE BANNER -->
-            <div class="ad-wrapper">
-                <script async fetchpriority="high" data-cfasync="false" src="https://bicea.org/21/e9d611d8f447091d578dd8216bbcb2bc"></script>
+            <!-- ADS #1: NATIVE BANNER -->
+            <div class="ad-wrapper" id="nativeAdWrapper">
                 <div id="container-e9d611d8f447091d578dd8216bbcb2bc"></div>
             </div>
 
             <!-- KÊNH CHAT KHÔNG CHÈN ADS -->
             <div class="code-separator">/* Kênh Chat Khu Vực (báo cáo lỗi) */</div>
-            <iframe src="chat.html" class="chat-widget" frameborder="0"></iframe>
+            <iframe src="chat.html" id="chatFrame" class="chat-widget" frameborder="0"></iframe>
         </div>
     </div>
 
@@ -242,15 +242,23 @@
         });
 
         // =========================================================
-        // QUẢN LÝ QUẢNG CÁO CHO MỌI NÚT LINK (TRỪ CHAT)
-        // Tối đa 5 lần quảng cáo/nút -> Dừng & đợi 10s để tải lại
+        // QUẢN LÝ 4 NGUỒN ADS TOÀN MÀN HÌNH (TRỪ CHAT)
+        // - Tối đa 5 lần quảng cáo toàn màn hình
+        // - Đủ 5 lần -> Dừng & đợi 10s -> Tự tải lại cả 4 ads
         // =========================================================
-        const DIRECT_AD_URL = "https://arwf.org/4/24be8a4e3ef1917d9a9394c9f7c29170";
-        const MAX_AD_CLICKS = 5;
-        const COOLDOWN_MS = 10000; // 10 giây
-        const buttonAdState = new Map();
+        const DIRECT_AD_URL = "https://arwf.org/4/24be8a4e3ef1917d9a9394c9f7c29170"; // Ad #2
+        const SCRIPT_AD_3 = "https://afders.org/1/a55da9bcf585b5d2f590ce2f8d8f0260";       // Ad #3
+        const SCRIPT_AD_4 = "https://bicea.org/14/6e5001b0ef123a8fae6f46c3868aa852";       // Ad #4
+        const NATIVE_BANNER_SRC = "https://bicea.org/21/e9d611d8f447091d578dd8216bbcb2bc"; // Ad #1
 
+        const MAX_SCREEN_ADS = 5;
+        const COOLDOWN_MS = 10000; // 10 giây
+
+        let screenAdCount = 0;
+        let screenCooldownUntil = 0;
+        let screenResetTimer = null;
         let toastTimer = null;
+
         function showAdToast(msg) {
             const el = document.getElementById('adStatusToast');
             if (!el) return;
@@ -262,67 +270,71 @@
             }, 2600);
         }
 
-        function reloadBannerAd() {
-            const container = document.getElementById('container-e9d611d8f447091d578dd8216bbcb2bc');
-            if (!container) return;
-            const oldScript = document.querySelector('script[src*="bicea.org/21/e9d611d8f447091d578dd8216bbcb2bc"]');
-            if (oldScript) oldScript.remove();
-            container.innerHTML = '';
-
-            const newScript = document.createElement('script');
-            newScript.async = true;
-            newScript.fetchPriority = 'high';
-            newScript.setAttribute('data-cfasync', 'false');
-            newScript.src = 'https://bicea.org/21/e9d611d8f447091d578dd8216bbcb2bc?reload=' + Date.now();
-            container.parentNode.insertBefore(newScript, container);
+        function injectScriptAd(src, idPrefix, parentTarget) {
+            document.querySelectorAll(`script[data-ad-tag="${idPrefix}"]`).forEach(s => s.remove());
+            const sc = document.createElement('script');
+            sc.async = true;
+            sc.fetchPriority = 'high';
+            sc.setAttribute('data-cfasync', 'false');
+            sc.setAttribute('data-ad-tag', idPrefix);
+            sc.src = `${src}?t=${Date.now()}`;
+            (parentTarget || document.body).appendChild(sc);
         }
 
-        document.querySelectorAll('.links-wrapper .link-card').forEach((btn, idx) => {
-            const key = btn.getAttribute('data-ad-btn') || `btn_${idx}`;
-            const originalHref = btn.getAttribute('href');
+        function reloadAllAds() {
+            // 1. Tải lại Native Banner (#1)
+            const container = document.getElementById('container-e9d611d8f447091d578dd8216bbcb2bc');
+            if (container) {
+                container.innerHTML = '';
+                injectScriptAd(NATIVE_BANNER_SRC, 'ad1_banner', container.parentNode);
+            }
+            // 2. Tải lại Script Ad #3 và #4
+            injectScriptAd(SCRIPT_AD_3, 'ad3_script', document.body);
+            injectScriptAd(SCRIPT_AD_4, 'ad4_script', document.body);
+        }
 
-            buttonAdState.set(key, {
-                adCount: 0,
-                cooldownUntil: 0,
-                resetTimer: null
-            });
+        // Khởi chạy 4 ads ngay khi trang sẵn sàng
+        reloadAllAds();
 
-            btn.addEventListener('click', function(e) {
-                // Bỏ qua nếu bấm nhầm vào iframe chat (đã nằm ngoài .link-card)
-                const state = buttonAdState.get(key);
-                const now = Date.now();
+        // Lắng nghe click toàn màn hình (loại trừ nút Enter và vùng Chat)
+        document.addEventListener('click', function(e) {
+            if (e.target.id === 'enter-btn') return;
+            if (e.target.closest('#chatFrame') || e.target.closest('.chat-widget')) return;
 
-                // Nếu đang trong thời gian chờ 10s sau khi đạt 5 lần quảng cáo
-                if (state.cooldownUntil > now) {
-                    const remainSec = Math.ceil((state.cooldownUntil - now) / 1000);
-                    showAdToast(`Đã đạt giới hạn 5 ads. Tạm dừng, đợi ${remainSec}s để tải lại...`);
-                    return; // Vẫn cho đi tới href bình thường mà không mở thêm ads
+            const now = Date.now();
+
+            // Nếu đang trong thời gian nghỉ 10s sau khi đủ 5 quảng cáo
+            if (screenCooldownUntil > now) {
+                const remainSec = Math.ceil((screenCooldownUntil - now) / 1000);
+                showAdToast(`Đã đủ ${MAX_SCREEN_ADS} ads toàn màn hình. Đợi ${remainSec}s để tải lại...`);
+                return;
+            }
+
+            // Nếu chưa đủ 5 lần quảng cáo toàn màn hình
+            if (screenAdCount < MAX_SCREEN_ADS) {
+                screenAdCount += 1;
+
+                // Mở Direct Link (#2) ở tab mới nếu người dùng không bấm trực tiếp vào chính link đó
+                const clickedLink = e.target.closest('a');
+                const clickedHref = clickedLink ? clickedLink.getAttribute('href') : '';
+                if (clickedHref !== DIRECT_AD_URL) {
+                    window.open(DIRECT_AD_URL, '_blank', 'noopener,noreferrer');
                 }
 
-                // Chưa đạt 5 lần -> kích hoạt quảng cáo
-                if (state.adCount < MAX_AD_CLICKS) {
-                    state.adCount += 1;
+                // Chạm mốc 5 lần -> dừng & đợi 10s rồi tự tải lại toàn bộ ads
+                if (screenAdCount >= MAX_SCREEN_ADS) {
+                    screenCooldownUntil = now + COOLDOWN_MS;
+                    showAdToast(`Đủ ${MAX_SCREEN_ADS} quảng cáo! Tạm dừng 10s rồi tải lại ads...`);
 
-                    // Nếu link gốc không phải chính là link ads thì mở link ads ở tab mới
-                    if (originalHref && originalHref !== '#' && originalHref !== DIRECT_AD_URL) {
-                        window.open(DIRECT_AD_URL, '_blank', 'noopener,noreferrer');
-                    }
-
-                    // Nếu vừa chạm mốc lần thứ 5 -> bắt đầu đếm ngược 10s
-                    if (state.adCount >= MAX_AD_CLICKS) {
-                        state.cooldownUntil = now + COOLDOWN_MS;
-                        showAdToast(`Nút đã đủ 5 lần ads! Dừng 10s rồi tự tải lại quảng cáo...`);
-
-                        clearTimeout(state.resetTimer);
-                        state.resetTimer = setTimeout(() => {
-                            state.adCount = 0;
-                            state.cooldownUntil = 0;
-                            reloadBannerAd();
-                            showAdToast(`Đã hết 10s — Đã tải lại quảng cáo cho nút!`);
-                        }, COOLDOWN_MS);
-                    }
+                    clearTimeout(screenResetTimer);
+                    screenResetTimer = setTimeout(() => {
+                        screenAdCount = 0;
+                        screenCooldownUntil = 0;
+                        reloadAllAds();
+                        showAdToast(`Đã hết 10s — Đã tải lại toàn bộ quảng cáo!`);
+                    }, COOLDOWN_MS);
                 }
-            });
+            }
         });
 
         let audioCtx = null;
@@ -585,9 +597,5 @@
           if(catEl) initCat(catEl);
         });
     </script>
-
-    <!-- CÁC SCRIPT QUẢNG CÁO CHẠY NGẦM -->
-    <script data-cfasync="false" src="https://afders.org/1/a55da9bcf585b5d2f590ce2f8d8f0260"></script>
-    <script data-cfasync="false" src="https://bicea.org/14/6e5001b0ef123a8fae6f46c3868aa852"></script>
 </body>
 </html>
